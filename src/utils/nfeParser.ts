@@ -13,6 +13,7 @@ export interface DadosNFeExtraidos {
   descricao: string;
   formaPagamento?: string;
   chaveAcesso?: string;
+  dataVencimento?: string;
 }
 
 /**
@@ -135,13 +136,16 @@ export function parseNfeXml(xmlString: string): DadosNFeExtraidos {
     }
   }
 
-  // 6. Chave de Acesso da NF-e
+  // 6. Chave de Acesso e Vencimento da Duplicata
   let chaveAcesso = '';
   const infNFeEl = xmlDoc.getElementsByTagName('infNFe')[0];
   if (infNFeEl) {
     const idAttr = infNFeEl.getAttribute('Id') || '';
     chaveAcesso = idAttr.replace(/\D/g, '');
   }
+
+  const dVenc = getTagText(xmlDoc, 'dVenc');
+  const dataVencimento = dVenc ? dVenc.slice(0, 10) : undefined;
 
   return {
     fornecedor: fornecedor.toUpperCase(),
@@ -153,5 +157,6 @@ export function parseNfeXml(xmlString: string): DadosNFeExtraidos {
     descricao,
     formaPagamento,
     chaveAcesso,
+    dataVencimento,
   };
 }

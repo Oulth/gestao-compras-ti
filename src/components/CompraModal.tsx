@@ -33,6 +33,7 @@ import { uploadComprovanteNf, deleteComprovanteNf } from '../services/storage';
 import { DEFAULT_CONFIGURACOES, getConfiguracoes } from '../services/compras';
 import { formatCurrency, formatCnpj, formatDate } from '../utils/formatters';
 import { parseNfeXml } from '../utils/nfeParser';
+import { parseNfsePdf } from '../utils/pdfParser';
 import { MODELOS_COMPRAS_RAPIDAS, type ModeloCompraRapida } from '../utils/presetsCompras';
 
 export interface CompraModalProps {
@@ -364,6 +365,10 @@ export const CompraModal: React.FC<CompraModalProps> = ({
         setCategoria('Software & Licenças (SaaS, SO, Antivírus)');
       }
 
+      if (dadosNfe.dataVencimento) {
+        setObservacoes(`Vencimento do Boleto / Duplicata: ${formatDate(dadosNfe.dataVencimento)}`);
+      }
+
       toast.success(
         `✨ NF-e Nº ${dadosNfe.numeroNf || 'importada'} processada! ${dadosNfe.fornecedor} • ${formatCurrency(Number(dadosNfe.valor) || 0)}`
       );
@@ -423,6 +428,7 @@ export const CompraModal: React.FC<CompraModalProps> = ({
 
   // Upload geral de arquivo (XML, PDF, Imagens)
   const handleUploadFile = async (file: File) => {
+    // 1. Arquivo XML da NF-e
     if (file.name.toLowerCase().endsWith('.xml') || file.type === 'text/xml' || file.type === 'application/xml') {
       await processarXmlNfe(file);
       return;
@@ -438,6 +444,39 @@ export const CompraModal: React.FC<CompraModalProps> = ({
     if (!validTypes.includes(file.type) && !file.name.match(/\.(pdf|jpe?g|png)$/i)) {
       toast.error('Formato não suportado. Por favor, envie arquivos em formato XML (NF-e), PDF, PNG ou JPG.');
       return;
+    }
+
+    // 2. Arquivo PDF: Leitura inteligente se for NFS-e / DANFSe
+    if (file.name.toLowerCase().endsWith('.pdf') || file.type === 'application/pdf') {
+      setIsParsingXml(true);
+      try {
+        const dadosNfse = await parseNfsePdf(file);
+        if (dadosNfse && dadosNfse.prestador) {
+          setFornecedor(dadosNfse.prestador);
+          if (dadosNfse.cnpj) setCnpj(formatCnpj(dadosNfse.cnpj));
+          if (dadosNfse.numeroNfs) setCodigoTi(dadosNfse.codigoTi);
+          if (dadosNfse.dataCompra) setDataCompra(dadosNfse.dataCompra);
+          if (dadosNfse.descricao) setDescricao(dadosNfse.descricao);
+          if (dadosNfse.valor) setValor(dadosNfse.valor);
+          if (dadosNfse.formaPagamento) setFormaPagamento(dadosNfse.formaPagamento);
+          if (dadosNfse.observacoes) setObservacoes(dadosNfse.observacoes);
+
+          const descLower = (dadosNfse.descricao + ' ' + dadosNfse.prestador).toLowerCase();
+          if (descLower.includes('contrato') || descLower.includes('manuten') || descLower.includes('mensal')) {
+            setTipo('Contrato Mensal');
+            setModalidadePagamento('recorrente_mensal');
+          } else {
+            setTipo('Serviço');
+          }
+          setCategoria('Suporte & Serviços Especializados');
+          toast.success(`✨ PDF da NFS-e Nº ${dadosNfse.numeroNfs || 'importada'} lido com sucesso! ${dadosNfse.prestador} • ${formatCurrency(Number(dadosNfse.valor) || 0)}`);
+          setErrors({});
+        }
+      } catch (pdfErr) {
+        console.warn('Leitura de texto do PDF:', pdfErr);
+      } finally {
+        setIsParsingXml(false);
+      }
     }
 
     setIsUploadingFile(true);
@@ -779,15 +818,15 @@ export const CompraModal: React.FC<CompraModalProps> = ({
                   </span>
                 </div>
                 
-                {/* Botão de Importação XML da Nota Fiscal */}
+                {/* Botão de Importação XML / PDF da Nota Fiscal */}
                 <div>
                   <input
                     ref={xmlInputRef}
                     type="file"
-                    accept=".xml,text/xml,application/xml"
+                    accept=".xml,application/pdf,text/xml,application/xml"
                     onChange={(e) => {
                       if (e.target.files && e.target.files[0]) {
-                        processarXmlNfe(e.target.files[0]);
+                        handleUploadFile(e.target.files[0]);
                       }
                     }}
                     className="hidden"
@@ -797,14 +836,14 @@ export const CompraModal: React.FC<CompraModalProps> = ({
                     onClick={() => xmlInputRef.current?.click()}
                     disabled={isParsingXml || isUploadingFile}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-white hover:bg-blue-600 text-blue-700 hover:text-white border border-blue-300 shadow-xs transition-all hover:scale-[1.02]"
-                    title="Selecione o arquivo .xml da Nota Fiscal para preencher tudo automaticamente"
+                    title="Selecione o arquivo .xml (NF-e) ou .pdf (NFS-e) para preencher tudo automaticamente sem digitar"
                   >
                     {isParsingXml ? (
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     ) : (
                       <FileCode className="w-3.5 h-3.5 text-blue-600 group-hover:text-white" />
                     )}
-                    <span>Importar XML da Nota Fiscal (NF-e)</span>
+                    <span>Importar Nota Fiscal (XML ou PDF)</span>
                   </button>
                 </div>
               </div>
