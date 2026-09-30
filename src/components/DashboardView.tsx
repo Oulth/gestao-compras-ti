@@ -20,6 +20,7 @@ import {
   ShieldCheck,
   PieChart as PieIcon,
   BarChart3,
+  Pencil,
 } from 'lucide-react';
 import type {
   DashboardData,
@@ -51,6 +52,7 @@ export interface DashboardViewProps {
   topSuppliers?: TopSupplier[];
   upcomingWarranties?: UpcomingWarranty[];
   isCarregando?: boolean;
+  onEditarPorId?: (id: string) => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -61,6 +63,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   topSuppliers: propSuppliers,
   upcomingWarranties: propWarranties,
   isCarregando = false,
+  onEditarPorId,
 }) => {
   const monthlyTotals = data ? data.monthlyTotals : propMonthly || [];
   const categoryTotals = data ? data.categoryTotals : propCategories || [];
@@ -456,6 +459,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           <Calendar className="w-3 h-3" />
                           Vencimento: {formatDate(item.garantia)}
                         </span>
+                        {onEditarPorId && (
+                          <button
+                            type="button"
+                            onClick={() => onEditarPorId(item.id)}
+                            className="inline-flex items-center gap-1 font-semibold text-blue-600 hover:text-blue-800 hover:underline transition-colors"
+                            title="Editar lançamento desta garantia"
+                          >
+                            <Pencil className="w-3 h-3" />
+                            <span>Editar</span>
+                          </button>
+                        )}
                       </div>
                     </div>
                   );

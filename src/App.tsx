@@ -4,9 +4,10 @@ import { Navbar, type TabType } from './components/Navbar';
 import { KPICards } from './components/KPICards';
 import { DashboardView } from './components/DashboardView';
 import { ComprasView } from './components/ComprasView';
-import { getCompras, deleteCompra } from './services/compras';
+import { CompraModal } from './components/CompraModal';
+import { getCompras, deleteCompra, saveCompra } from './services/compras';
 import { calculateDashboardData } from './utils/dashboard';
-import type { Compra, DashboardData } from './types';
+import type { Compra, CompraInput, DashboardData } from './types';
 import { FileSpreadsheet } from 'lucide-react';
 
 export default function App() {
@@ -14,6 +15,8 @@ export default function App() {
   const [anoSelecionado, setAnoSelecionado] = useState<number>(2026);
   const [compras, setCompras] = useState<Compra[]>([]);
   const [isCarregando, setIsCarregando] = useState<boolean>(true);
+  const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
+  const [compraEmEdicao, setCompraEmEdicao] = useState<Compra | null>(null);
 
   // Carrega compras do Supabase
   const carregarDados = useCallback(async () => {
@@ -52,11 +55,43 @@ export default function App() {
   }, [compras, anoSelecionado]);
 
   const handleNovaCompra = () => {
-    toast.info('Modal de Nova Compra será integrado na próxima etapa!');
+    setCompraEmEdicao(null);
+    setIsModalOpen(true);
   };
 
   const handleEditarCompra = (compra: Compra) => {
-    toast.info(`Editar: ${compra.descricao} (${compra.codigo_ti || 'Sem código'})`);
+    setCompraEmEdicao(compra);
+    setIsModalOpen(true);
+  };
+
+  const handleEditarPorId = (id: string) => {
+    const compra = compras.find((c) => c.id === id);
+    if (compra) {
+      handleEditarCompra(compra);
+    }
+  };
+
+  const handleFecharModal = () => {
+    setIsModalOpen(false);
+    setCompraEmEdicao(null);
+  };
+
+  const handleSalvarCompra = async (dadosCompra: CompraInput | Compra) => {
+    try {
+      const resultado = await saveCompra(dadosCompra);
+      const isEdit = Boolean('id' in dadosCompra && dadosCompra.id);
+      const identificador = resultado.codigo_ti || resultado.descricao || 'Registro';
+      toast.success(
+        isEdit
+          ? `Lançamento atualizado com sucesso! (${identificador})`
+          : `Nova compra cadastrada com sucesso! (${identificador})`
+      );
+      await carregarDados();
+    } catch (error: any) {
+      console.error('Erro ao salvar compra:', error);
+      toast.error(error.message || 'Falha ao salvar lançamento.');
+      throw error;
+    }
   };
 
   const handleExcluirCompra = async (id: string) => {
@@ -116,6 +151,7 @@ export default function App() {
               ano={anoSelecionado}
               data={dashboardData}
               isCarregando={isCarregando}
+              onEditarPorId={handleEditarPorId}
             />
           </div>
         )}
@@ -155,6 +191,14 @@ export default function App() {
           </p>
         </div>
       </footer>
+
+      {/* Modal de Cadastro / Edição de Compras */}
+      <CompraModal
+        isOpen={isModalOpen}
+        onClose={handleFecharModal}
+        compraEmEdicao={compraEmEdicao}
+        onSalvar={handleSalvarCompra}
+      />
     </div>
   );
 }
