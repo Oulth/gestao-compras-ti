@@ -4,8 +4,12 @@
  */
 import * as pdfjsLib from 'pdfjs-dist';
 
-// Configura o worker do PDF.js via CDN seguro
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.js?url';
+
+// Configura o worker do PDF.js localmente na mesma origem
+if (typeof window !== 'undefined') {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
+}
 
 export interface DadosNfsePdfExtraidos {
   prestador: string;
@@ -26,7 +30,12 @@ export interface DadosNfsePdfExtraidos {
 export async function parseNfsePdf(file: File): Promise<DadosNfsePdfExtraidos | null> {
   try {
     const arrayBuffer = await file.arrayBuffer();
-    const doc = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+    const doc = await pdfjsLib.getDocument({
+      data: new Uint8Array(arrayBuffer),
+      useWorkerFetch: false,
+      isEvalSupported: false,
+      useSystemFonts: true,
+    }).promise;
     if (doc.numPages === 0) return null;
 
     const page = await doc.getPage(1);

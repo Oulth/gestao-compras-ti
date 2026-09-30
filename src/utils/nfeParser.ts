@@ -114,16 +114,20 @@ export function parseNfeXml(xmlString: string): DadosNFeExtraidos {
       const xProd = getTagText(prodEl, 'xProd');
       const qCom = getTagText(prodEl, 'qCom');
       const qNum = parseFloat(qCom);
-      const qtdText = !isNaN(qNum) && qNum > 1 ? ` (${qNum} un)` : '';
+      const qtdText = !isNaN(qNum) ? `${qNum % 1 === 0 ? qNum : qNum.toFixed(2)}x ` : '';
+      const vProd = getTagText(prodEl, 'vProd');
+      const vNum = parseFloat(vProd);
+      const valorText = !isNaN(vNum) && vNum > 0 ? ` [R$ ${vNum.toFixed(2).replace('.', ',')}]` : '';
 
       if (xProd) {
-        itensDescricao.push(`${xProd}${qtdText}`);
+        itensDescricao.push(`• ${qtdText}${xProd}${valorText}`);
       }
     }
   }
 
+  // Lista 100% dos produtos e itens sem cortes
   const descricao = itensDescricao.length > 0
-    ? itensDescricao.slice(0, 5).join('; ') + (itensDescricao.length > 5 ? ` (+${itensDescricao.length - 5} itens)` : '')
+    ? itensDescricao.join('\n')
     : (getTagText(xmlDoc, 'infAdic') || 'Aquisição de materiais/serviços de T.I conforme NF-e');
 
   // 5. Forma de Pagamento
