@@ -172,7 +172,7 @@ export const CompraModal: React.FC<CompraModalProps> = ({
       setObservacoes('');
     }
     setErrors({});
-  }, [isOpen, compraEmEdicao, config]);
+  }, [isOpen, compraEmEdicao]);
 
   // Aplica máscara de CNPJ enquanto o usuário digita
   const handleCnpjChange = (e: React.ChangeEvent<HTMLInputElement>) => {
