@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   X,
   Building2,
@@ -12,6 +12,8 @@ import {
   Tag,
   DollarSign,
   Layers,
+  FileCode,
+  Zap,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
@@ -25,6 +27,8 @@ import { consultarCnpj } from '../services/brasilApi';
 import { uploadComprovanteNf, deleteComprovanteNf } from '../services/storage';
 import { DEFAULT_CONFIGURACOES, getConfiguracoes } from '../services/compras';
 import { formatCurrency, formatCnpj } from '../utils/formatters';
+import { parseNfeXml } from '../utils/nfeParser';
+import { MODELOS_COMPRAS_RAPIDAS, type ModeloCompraRapida } from '../utils/presetsCompras';
 
 export interface CompraModalProps {
   isOpen: boolean;
@@ -34,6 +38,7 @@ export interface CompraModalProps {
   categorias?: string[];
   centrosCusto?: string[];
   formasPagamento?: string[];
+  comprasExistentes?: Compra[];
 }
 
 const TIPOS_DESPESA: TipoDespesa[] = [
@@ -58,6 +63,7 @@ export const CompraModal: React.FC<CompraModalProps> = ({
   categorias: categoriasProp,
   centrosCusto: centrosCustoProp,
   formasPagamento: formasPagamentoProp,
+  comprasExistentes = [],
 }) => {
   // Configurações dinâmicas
   const [config, setConfig] = useState<ConfiguracoesApp>({
@@ -87,11 +93,31 @@ export const CompraModal: React.FC<CompraModalProps> = ({
   // Estados de controle e feedback
   const [isSearchingCnpj, setIsSearchingCnpj] = useState<boolean>(false);
   const [isUploadingFile, setIsUploadingFile] = useState<boolean>(false);
+  const [isParsingXml, setIsParsingXml] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const xmlInputRef = useRef<HTMLInputElement>(null);
+
+  // Histórico de fornecedores únicos para autocompletar e sugestões
+  const fornecedoresHistorico = useMemo(() => {
+    const mapa = new Map<string, { nome: string; cnpj: string; categoria: string; centroCusto: string; formaPagamento: string }>();
+    comprasExistentes.forEach((c) => {
+      const nomeTrim = c.fornecedor?.trim();
+      if (nomeTrim && !mapa.has(nomeTrim.toLowerCase())) {
+        mapa.set(nomeTrim.toLowerCase(), {
+          nome: nomeTrim,
+          cnpj: c.cnpj ? formatCnpj(c.cnpj) : '',
+          categoria: c.categoria || '',
+          centroCusto: c.centro_custo || '',
+          formaPagamento: c.forma_pagamento || '',
+        });
+      }
+    });
+    return Array.from(mapa.values());
+  }, [comprasExistentes]);
 
   // Carrega configurações se não vierem via props
   useEffect(() => {
@@ -121,13 +147,13 @@ export const CompraModal: React.FC<CompraModalProps> = ({
   // Atalho de fechar via tecla ESC
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen && !isSaving && !isUploadingFile) {
+      if (e.key === 'Escape' && isOpen && !isSaving && !isUploadingFile && !isParsingXml) {
         onClose();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, isSaving, isUploadingFile, onClose]);
+  }, [isOpen, isSaving, isUploadingFile, isParsingXml, onClose]);
 
   // Inicializa formulário ao abrir ou alterar registro em edição
   useEffect(() => {
@@ -195,6 +221,107 @@ export const CompraModal: React.FC<CompraModalProps> = ({
     }
   };
 
+  // Quando o usuário seleciona ou digita o nome de um fornecedor conhecido
+  const handleFornecedorChange = (novoNome: string) => {
+    setFornecedor(novoNome);
+    if (errors.fornecedor) setErrors((prev) => ({ ...prev, fornecedor: '' }));
+
+    // Procura se já temos esse fornecedor no histórico
+    const encontrado = fornecedoresHistorico.find(
+      (f) => f.nome.toLowerCase() === novoNome.trim().toLowerCase()
+    );
+    if (encontrado) {
+      if (encontrado.cnpj && !cnpj) {
+        setCnpj(encontrado.cnpj);
+      }
+      if (encontrado.categoria && (!categoria || categoria === config.categorias[0])) {
+        setCategoria(encontrado.categoria);
+      }
+      if (encontrado.centroCusto && (!centroCusto || centroCusto === config.centrosCusto[0])) {
+        setCentroCusto(encontrado.centroCusto);
+      }
+      if (encontrado.formaPagamento && (!formaPagamento || formaPagamento === config.formasPagamento[0])) {
+        setFormaPagamento(encontrado.formaPagamento);
+      }
+      toast.info(`Dados de ${encontrado.nome} recuperados do histórico!`);
+    }
+  };
+
+  // Aplicação rápida de modelo predefinido (1 Clique)
+  const aplicarModelo = (modelo: ModeloCompraRapida) => {
+    setTipo(modelo.dados.tipo);
+    setFornecedor(modelo.dados.fornecedor);
+    if (modelo.dados.cnpj) setCnpj(modelo.dados.cnpj);
+    setCategoria(modelo.dados.categoria);
+    setCentroCusto(modelo.dados.centro_custo);
+    setFormaPagamento(modelo.dados.forma_pagamento);
+    setStatusPagamento(modelo.dados.status_pagamento);
+    setDescricao(modelo.dados.descricao);
+    if (modelo.dados.valorSugerido) {
+      setValor(modelo.dados.valorSugerido);
+    }
+    setErrors({});
+    toast.success(`⚡ Modelo "${modelo.nome}" aplicado com sucesso!`);
+  };
+
+  // Processa arquivo XML de NF-e
+  const processarXmlNfe = async (file: File) => {
+    setIsParsingXml(true);
+    try {
+      const xmlText = await file.text();
+      const dadosNfe = parseNfeXml(xmlText);
+
+      if (dadosNfe.fornecedor) setFornecedor(dadosNfe.fornecedor);
+      if (dadosNfe.cnpj) setCnpj(formatCnpj(dadosNfe.cnpj));
+      if (dadosNfe.valor) setValor(dadosNfe.valor);
+      if (dadosNfe.dataCompra) setDataCompra(dadosNfe.dataCompra);
+      if (dadosNfe.codigoTi) setCodigoTi(dadosNfe.codigoTi);
+      if (dadosNfe.descricao) setDescricao(dadosNfe.descricao);
+      if (dadosNfe.formaPagamento) setFormaPagamento(dadosNfe.formaPagamento);
+      setTipo('Produto');
+
+      // Tenta associar categoria mais provável por inteligência de palavras-chave
+      const descLower = (dadosNfe.descricao + ' ' + dadosNfe.fornecedor).toLowerCase();
+      if (descLower.includes('toner') || descLower.includes('tinta') || descLower.includes('bobina') || descLower.includes('cartucho')) {
+        setCategoria('Insumos (Toners, Tintas, Bobinas)');
+      } else if (descLower.includes('cabo') || descLower.includes('patch') || descLower.includes('rj45') || descLower.includes('switch') || descLower.includes('roteador') || descLower.includes('access point')) {
+        setCategoria('Infraestrutura de Rede');
+      } else if (descLower.includes('ssd') || descLower.includes('memoria') || descLower.includes('notebook') || descLower.includes('computador') || descLower.includes('dell') || descLower.includes('desktop')) {
+        setCategoria('Hardware (PCs, Notebooks, Servidores)');
+      } else if (descLower.includes('licenca') || descLower.includes('software') || descLower.includes('antivirus')) {
+        setCategoria('Software & Licenças');
+      }
+
+      toast.success(
+        `✨ NF-e Nº ${dadosNfe.numeroNf || 'importada'} processada! ${dadosNfe.fornecedor} • ${formatCurrency(Number(dadosNfe.valor) || 0)}`
+      );
+
+      // Limpa erros
+      setErrors({});
+
+      // Faz o upload do próprio arquivo XML para o Supabase Storage como comprovante oficial
+      setIsUploadingFile(true);
+      try {
+        const res = await uploadComprovanteNf(file);
+        setLinkNf(res.url);
+        setNomeArquivoNf(res.nome);
+        toast.info('Arquivo XML da NF-e salvo como comprovante fiscal.');
+      } catch (storageErr) {
+        console.warn('Erro ao salvar XML no storage:', storageErr);
+      } finally {
+        setIsUploadingFile(false);
+      }
+    } catch (err: any) {
+      console.error('Erro ao processar XML da NF-e:', err);
+      toast.error(err.message || 'Falha ao ler arquivo XML da Nota Fiscal.');
+    } finally {
+      setIsParsingXml(false);
+      if (xmlInputRef.current) {
+        xmlInputRef.current.value = '';
+      }
+    }
+  };
+
   // Consulta à BrasilAPI
   const realizarBuscaCnpj = async (cnpjValue?: string) => {
     const targetCnpj = (cnpjValue || cnpj).replace(/\D/g, '');
@@ -212,7 +339,6 @@ export const CompraModal: React.FC<CompraModalProps> = ({
           ? ` (${resultado.nomeFantasia})`
           : '';
         toast.success(`CNPJ localizado: ${resultado.razaoSocial}${fantasia}`);
-        // Limpa erro do campo se existia
         setErrors((prev) => ({ ...prev, fornecedor: '' }));
       } else {
         toast.info('CNPJ não encontrado na base pública da Receita Federal. Preencha manualmente.');
@@ -225,8 +351,14 @@ export const CompraModal: React.FC<CompraModalProps> = ({
     }
   };
 
-  // Upload de arquivo para Supabase Storage
+  // Upload geral de arquivo (XML, PDF, Imagens)
   const handleUploadFile = async (file: File) => {
+    // Se for arquivo XML, aciona leitura inteligente de NF-e
+    if (file.name.toLowerCase().endsWith('.xml') || file.type === 'text/xml' || file.type === 'application/xml') {
+      await processarXmlNfe(file);
+      return;
+    }
+
     // Validação de tamanho (máximo 15MB)
     const MAX_SIZE = 15 * 1024 * 1024;
     if (file.size > MAX_SIZE) {
@@ -237,7 +369,7 @@ export const CompraModal: React.FC<CompraModalProps> = ({
     // Validação de tipo
     const validTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg'];
     if (!validTypes.includes(file.type) && !file.name.match(/\.(pdf|jpe?g|png)$/i)) {
-      toast.error('Formato não suportado. Por favor, envie arquivos em formato PDF, PNG ou JPG.');
+      toast.error('Formato não suportado. Por favor, envie arquivos em formato XML (NF-e), PDF, PNG ou JPG.');
       return;
     }
 
@@ -408,7 +540,7 @@ export const CompraModal: React.FC<CompraModalProps> = ({
               <p className="text-xs text-slate-500 font-medium">
                 {isEditing
                   ? 'Atualize as informações do registro e anexe os comprovantes fiscais.'
-                  : 'Cadastre aquisições de produtos, serviços e contratos do setor de Tecnologia.'}
+                  : 'Cadastre com 1 clique usando modelos prontos ou importando o XML da NF-e.'}
               </p>
             </div>
           </div>
@@ -416,7 +548,7 @@ export const CompraModal: React.FC<CompraModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            disabled={isSaving || isUploadingFile}
+            disabled={isSaving || isUploadingFile || isParsingXml}
             className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 rounded-xl transition-colors disabled:opacity-50"
             title="Fechar (Esc)"
           >
@@ -426,12 +558,88 @@ export const CompraModal: React.FC<CompraModalProps> = ({
 
         {/* Corpo do Formulário com Scroll */}
         <form onSubmit={handleSubmit} className="overflow-y-auto px-6 py-6 space-y-6 flex-1 text-slate-800">
+          
+          {/* PAINEL DE AUTOMAÇÕES E AGILIDADE (1 CLIQUE / XML) */}
+          {!isEditing && (
+            <div className="bg-gradient-to-r from-blue-50 via-indigo-50/40 to-slate-50 p-4 rounded-2xl border border-blue-200/80 shadow-xs space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-blue-200/60">
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-lg bg-blue-600 text-white flex items-center justify-center">
+                    <Zap className="w-3.5 h-3.5" />
+                  </div>
+                  <span className="text-xs font-bold text-blue-950 uppercase tracking-wider">
+                    Automação Rápida: Zero Digitação Manual
+                  </span>
+                </div>
+                
+                {/* Botão de Importação XML da Nota Fiscal */}
+                <div>
+                  <input
+                    ref={xmlInputRef}
+                    type="file"
+                    accept=".xml,text/xml,application/xml"
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files[0]) {
+                        processarXmlNfe(e.target.files[0]);
+                      }
+                    }}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => xmlInputRef.current?.click()}
+                    disabled={isParsingXml || isUploadingFile}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-white hover:bg-blue-600 text-blue-700 hover:text-white border border-blue-300 shadow-xs transition-all hover:scale-[1.02]"
+                    title="Selecione o arquivo .xml da Nota Fiscal para preencher tudo automaticamente"
+                  >
+                    {isParsingXml ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <FileCode className="w-3.5 h-3.5 text-blue-600 group-hover:text-white" />
+                    )}
+                    <span>Importar XML da Nota Fiscal (NF-e)</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Botões de Modelos Rápidos de 1 Clique */}
+              <div>
+                <p className="text-[11px] font-semibold text-slate-500 mb-2 flex items-center gap-1">
+                  <span>⚡ Ou clique em uma despesa frequente para preencher em 1 clique:</span>
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {MODELOS_COMPRAS_RAPIDAS.map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => aplicarModelo(m)}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-white hover:bg-blue-600 hover:text-white text-slate-700 border border-slate-200/90 shadow-2xs transition-all hover:shadow-xs group cursor-pointer"
+                    >
+                      <span className="text-sm">{m.icone}</span>
+                      <span>{m.nome}</span>
+                      <span className="text-[10px] px-1.5 py-0.2 rounded-md bg-slate-100 group-hover:bg-blue-500 group-hover:text-white text-slate-500 font-mono">
+                        {m.badge}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Seção 1: Dados do Fornecedor e Identificação */}
           <div className="space-y-4">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
-              <Building2 className="w-3.5 h-3.5 text-blue-600" />
-              Fornecedor & Identificação
-            </h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                <Building2 className="w-3.5 h-3.5 text-blue-600" />
+                Fornecedor & Identificação
+              </h3>
+              {fornecedoresHistorico.length > 0 && (
+                <span className="text-[11px] text-blue-600 font-medium">
+                  {fornecedoresHistorico.length} fornecedores no histórico
+                </span>
+              )}
+            </div>
 
             <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
               {/* CNPJ com Auto-busca */}
@@ -465,29 +673,36 @@ export const CompraModal: React.FC<CompraModalProps> = ({
                   </button>
                 </div>
                 <p className="text-[11px] text-slate-400 mt-1">
-                  Digite os 14 números para preenchimento via BrasilAPI.
+                  Digite os 14 números para autocompletar via BrasilAPI.
                 </p>
               </div>
 
-              {/* Razão Social / Fornecedor (Obrigatório) */}
+              {/* Razão Social / Fornecedor com Datalist Inteligente */}
               <div className="md:col-span-7">
                 <label className="block text-xs font-bold text-slate-700 mb-1">
                   Razão Social / Fornecedor <span className="text-rose-500">*</span>
                 </label>
-                <input
-                  type="text"
-                  value={fornecedor}
-                  onChange={(e) => {
-                    setFornecedor(e.target.value);
-                    if (errors.fornecedor) setErrors((prev) => ({ ...prev, fornecedor: '' }));
-                  }}
-                  placeholder="Ex: Dell Computadores do Brasil Ltda"
-                  className={`w-full h-10 px-3 text-xs sm:text-sm rounded-xl border bg-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all ${
-                    errors.fornecedor
-                      ? 'border-rose-400 focus:border-rose-600'
-                      : 'border-slate-300 focus:border-blue-600'
-                  }`}
-                />
+                <div className="relative">
+                  <input
+                    type="text"
+                    list="fornecedores-historico-lista"
+                    value={fornecedor}
+                    onChange={(e) => handleFornecedorChange(e.target.value)}
+                    placeholder="Ex: Dell, Kalunga, Provedor Fibra, Kabum..."
+                    className={`w-full h-10 px-3 text-xs sm:text-sm rounded-xl border bg-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all ${
+                      errors.fornecedor
+                        ? 'border-rose-400 focus:border-rose-600'
+                        : 'border-slate-300 focus:border-blue-600'
+                    }`}
+                  />
+                  <datalist id="fornecedores-historico-lista">
+                    {fornecedoresHistorico.map((f) => (
+                      <option key={f.nome} value={f.nome}>
+                        {f.cnpj ? `${f.cnpj} • ${f.categoria}` : f.categoria}
+                      </option>
+                    ))}
+                  </datalist>
+                </div>
                 {errors.fornecedor && (
                   <p className="text-[11px] text-rose-500 mt-1 font-medium">{errors.fornecedor}</p>
                 )}
@@ -524,7 +739,7 @@ export const CompraModal: React.FC<CompraModalProps> = ({
               {/* Categoria */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Categoria <span className="text-rose-500">*</span>
+                  Categoria Orçamentária <span className="text-rose-500">*</span>
                 </label>
                 <select
                   value={categoria}
@@ -538,9 +753,6 @@ export const CompraModal: React.FC<CompraModalProps> = ({
                       : 'border-slate-300 focus:border-blue-600'
                   }`}
                 >
-                  <option value="" disabled>
-                    Selecione uma categoria...
-                  </option>
                   {config.categorias.map((cat) => (
                     <option key={cat} value={cat}>
                       {cat}
@@ -562,7 +774,6 @@ export const CompraModal: React.FC<CompraModalProps> = ({
                   onChange={(e) => setCentroCusto(e.target.value)}
                   className="w-full h-10 px-3 text-xs sm:text-sm rounded-xl border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition-all"
                 >
-                  <option value="">Não informado</option>
                   {config.centrosCusto.map((cc) => (
                     <option key={cc} value={cc}>
                       {cc}
@@ -575,17 +786,17 @@ export const CompraModal: React.FC<CompraModalProps> = ({
             {/* Descrição Detalhada */}
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
-                Descrição Detalhada dos Itens / Escopo <span className="text-rose-500">*</span>
+                Descrição Detalhada dos Itens / Serviços <span className="text-rose-500">*</span>
               </label>
               <textarea
-                rows={3}
+                rows={2}
                 value={descricao}
                 onChange={(e) => {
                   setDescricao(e.target.value);
                   if (errors.descricao) setErrors((prev) => ({ ...prev, descricao: '' }));
                 }}
-                placeholder="Ex: 5x Notebooks Dell Latitude 3440 Core i5 16GB SSD 512GB para os novos laboratórios de informática..."
-                className={`w-full p-3 text-xs sm:text-sm rounded-xl border bg-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all resize-y ${
+                placeholder="Ex: Aquisição de 2x Nobreaks 1500VA para o rack principal e 5 bobinas térmicas..."
+                className={`w-full p-3 text-xs sm:text-sm rounded-xl border bg-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all ${
                   errors.descricao
                     ? 'border-rose-400 focus:border-rose-600'
                     : 'border-slate-300 focus:border-blue-600'
@@ -597,7 +808,7 @@ export const CompraModal: React.FC<CompraModalProps> = ({
             </div>
           </div>
 
-          {/* Seção 3: Valores, Prazos e Condições Financeiras */}
+          {/* Seção 3: Valores, Prazos e Pagamento */}
           <div className="space-y-4 pt-2 border-t border-slate-100">
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
               <DollarSign className="w-3.5 h-3.5 text-blue-600" />
@@ -605,13 +816,13 @@ export const CompraModal: React.FC<CompraModalProps> = ({
             </h3>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-              {/* Valor Total R$ */}
+              {/* Valor (R$) */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
                   Valor Total (R$) <span className="text-rose-500">*</span>
                 </label>
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                  <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">
                     R$
                   </span>
                   <input
@@ -624,21 +835,15 @@ export const CompraModal: React.FC<CompraModalProps> = ({
                       if (errors.valor) setErrors((prev) => ({ ...prev, valor: '' }));
                     }}
                     placeholder="0,00"
-                    className={`w-full h-10 pl-9 pr-3 text-xs sm:text-sm font-mono font-semibold rounded-xl border bg-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all ${
+                    className={`w-full h-10 pl-9 pr-3 text-xs sm:text-sm font-mono font-bold rounded-xl border bg-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all ${
                       errors.valor
                         ? 'border-rose-400 focus:border-rose-600'
                         : 'border-slate-300 focus:border-blue-600'
                     }`}
                   />
                 </div>
-                {errors.valor ? (
+                {errors.valor && (
                   <p className="text-[11px] text-rose-500 mt-1 font-medium">{errors.valor}</p>
-                ) : (
-                  valor && (
-                    <p className="text-[11px] text-slate-400 mt-1 font-medium">
-                      {formatCurrency(parseFloat(valor.replace(',', '.')) || 0)}
-                    </p>
-                  )
                 )}
               </div>
 
@@ -665,24 +870,6 @@ export const CompraModal: React.FC<CompraModalProps> = ({
                 )}
               </div>
 
-              {/* Status do Pagamento */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Status do Pagamento <span className="text-rose-500">*</span>
-                </label>
-                <select
-                  value={statusPagamento}
-                  onChange={(e) => setStatusPagamento(e.target.value as StatusPagamento)}
-                  className="w-full h-10 px-3 text-xs sm:text-sm font-semibold rounded-xl border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition-all"
-                >
-                  {STATUS_PAGAMENTO.map((st) => (
-                    <option key={st} value={st}>
-                      {st}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
               {/* Forma de Pagamento */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
@@ -693,7 +880,6 @@ export const CompraModal: React.FC<CompraModalProps> = ({
                   onChange={(e) => setFormaPagamento(e.target.value)}
                   className="w-full h-10 px-3 text-xs sm:text-sm rounded-xl border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition-all"
                 >
-                  <option value="">Não informado</option>
                   {config.formasPagamento.map((fp) => (
                     <option key={fp} value={fp}>
                       {fp}
@@ -701,27 +887,45 @@ export const CompraModal: React.FC<CompraModalProps> = ({
                   ))}
                 </select>
               </div>
-            </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-              {/* Parcelas / Condições */}
+              {/* Status do Pagamento */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Parcelas / Vencimentos
+                  Status do Pagamento <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  value={statusPagamento}
+                  onChange={(e) => setStatusPagamento(e.target.value as StatusPagamento)}
+                  className="w-full h-10 px-3 text-xs sm:text-sm rounded-xl border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition-all"
+                >
+                  {STATUS_PAGAMENTO.map((sp) => (
+                    <option key={sp} value={sp}>
+                      {sp}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {/* Parcelas */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Condição / Parcelas
                 </label>
                 <input
                   type="text"
                   value={parcelas}
                   onChange={(e) => setParcelas(e.target.value)}
-                  placeholder="Ex: 3x de R$ 450,00 ou À vista"
+                  placeholder="Ex: À vista, 3x s/ juros, Mensal"
                   className="w-full h-10 px-3 text-xs sm:text-sm rounded-xl border border-slate-300 bg-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition-all"
                 />
               </div>
 
-              {/* Término de Garantia / Licença */}
+              {/* Garantia / Licença até */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Término de Garantia / Licença
+                  Garantia / Validade até
                 </label>
                 <input
                   type="date"
@@ -729,60 +933,44 @@ export const CompraModal: React.FC<CompraModalProps> = ({
                   onChange={(e) => setGarantia(e.target.value)}
                   className="w-full h-10 px-3 text-xs sm:text-sm rounded-xl border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition-all"
                 />
-                <p className="text-[11px] text-slate-400 mt-1">
-                  Alimenta o monitor de alertas do Dashboard.
-                </p>
               </div>
 
-              {/* Código T.I (Opcional) */}
+              {/* Código T.I / Nº NF */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Código de Identificação T.I
+                  Código Interno / Nº NF
                 </label>
                 <input
                   type="text"
                   value={codigoTi}
                   onChange={(e) => setCodigoTi(e.target.value)}
-                  placeholder="Ex: TI-2026-001 (ou deixe em branco)"
+                  placeholder="Ex: NF-12845 ou TI-2026-001"
                   className="w-full h-10 px-3 text-xs sm:text-sm font-mono rounded-xl border border-slate-300 bg-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition-all"
                 />
               </div>
             </div>
           </div>
 
-          {/* Seção 4: Comprovante Fiscal / Nota Fiscal (Supabase Storage) */}
-          <div className="space-y-3 pt-2 border-t border-slate-100">
+          {/* Seção 4: Comprovante Fiscal e Anexo com Drag & Drop */}
+          <div className="space-y-4 pt-2 border-t border-slate-100">
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
-              <FileText className="w-3.5 h-3.5 text-blue-600" />
-              Comprovante / Nota Fiscal (Supabase Storage)
+              <UploadCloud className="w-3.5 h-3.5 text-blue-600" />
+              Comprovante / Nota Fiscal (PDF, Imagem ou XML)
             </h3>
 
-            {/* Input invisível de arquivo */}
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={(e) => {
-                if (e.target.files && e.target.files.length > 0) {
-                  handleUploadFile(e.target.files[0]);
-                }
-              }}
-              accept=".pdf,image/png,image/jpeg,image/jpg"
-              className="hidden"
-            />
-
-            {/* Card de anexo já carregado */}
             {linkNf ? (
-              <div className="flex items-center justify-between p-3.5 bg-blue-50/70 border border-blue-200 rounded-xl">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-10 h-10 rounded-lg bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs">
-                    <FileText className="w-5 h-5" />
+              // Arquivo já anexado
+              <div className="flex items-center justify-between p-4 rounded-xl border border-emerald-200 bg-emerald-50/70 text-slate-800">
+                <div className="flex items-center gap-3 overflow-hidden">
+                  <div className="w-9 h-9 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                    <CheckCircle2 className="w-5 h-5" />
                   </div>
-                  <div className="min-w-0">
-                    <p className="text-xs sm:text-sm font-bold text-slate-900 truncate">
-                      {nomeArquivoNf || 'Nota_Fiscal_Comprovante'}
+                  <div className="truncate">
+                    <p className="text-xs font-bold text-emerald-950 truncate">
+                      {nomeArquivoNf || 'Comprovante / Nota Fiscal anexado'}
                     </p>
-                    <p className="text-[11px] text-blue-700 font-medium">
-                      Armazenado no bucket seguro `comprovantes-nf`
+                    <p className="text-[11px] text-emerald-700">
+                      Armazenado no bucket seguro Supabase Storage
                     </p>
                   </div>
                 </div>
@@ -792,17 +980,15 @@ export const CompraModal: React.FC<CompraModalProps> = ({
                     href={linkNf}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-blue-700 bg-white hover:bg-blue-100 border border-blue-200 transition-colors shadow-2xs"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-blue-700 bg-white border border-blue-200 hover:bg-blue-50 transition-colors shadow-2xs"
                   >
-                    <span>Abrir</span>
                     <ExternalLink className="w-3.5 h-3.5" />
+                    <span>Visualizar</span>
                   </a>
-
                   <button
                     type="button"
                     onClick={handleRemoverAnexo}
-                    disabled={isUploadingFile || isSaving}
-                    className="p-1.5 text-rose-600 hover:text-rose-800 hover:bg-rose-100/60 rounded-lg transition-colors"
+                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
                     title="Remover anexo"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -810,99 +996,100 @@ export const CompraModal: React.FC<CompraModalProps> = ({
                 </div>
               </div>
             ) : (
-              /* Dropzone para upload */
+              // Dropzone para novo upload
               <div
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
-                onClick={() => !isUploadingFile && fileInputRef.current?.click()}
-                className={`border-2 border-dashed rounded-xl p-5 text-center cursor-pointer transition-all ${
+                className={`relative border-2 border-dashed rounded-2xl p-6 text-center transition-all ${
                   isDragging
-                    ? 'border-blue-500 bg-blue-50/80 scale-[0.99]'
-                    : 'border-slate-300 hover:border-blue-400 bg-slate-50/50 hover:bg-white'
+                    ? 'border-blue-500 bg-blue-50/70 scale-[1.01]'
+                    : 'border-slate-200 hover:border-blue-400 bg-slate-50/50 hover:bg-slate-50'
                 }`}
               >
-                {isUploadingFile ? (
-                  <div className="flex flex-col items-center justify-center py-2 gap-2 text-blue-600">
-                    <Loader2 className="w-8 h-8 animate-spin" />
-                    <span className="text-xs font-bold">Enviando anexo para o Supabase Storage...</span>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".xml,application/pdf,image/png,image/jpeg,image/jpg"
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files[0]) {
+                      handleUploadFile(e.target.files[0]);
+                    }
+                  }}
+                  className="hidden"
+                />
+
+                <div className="flex flex-col items-center justify-center space-y-2">
+                  <div className="w-12 h-12 rounded-xl bg-blue-100/70 text-blue-600 flex items-center justify-center">
+                    {isUploadingFile || isParsingXml ? (
+                      <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
+                    ) : (
+                      <UploadCloud className="w-6 h-6" />
+                    )}
                   </div>
-                ) : (
-                  <div className="flex flex-col items-center justify-center py-1">
-                    <div className="w-10 h-10 rounded-xl bg-slate-100 text-slate-500 flex items-center justify-center mb-2">
-                      <UploadCloud className="w-5 h-5 text-blue-600" />
-                    </div>
-                    <p className="text-xs sm:text-sm font-semibold text-slate-700">
-                      Arraste e solte o comprovante / NF aqui, ou <span className="text-blue-600 font-bold underline">procure no computador</span>
-                    </p>
-                    <p className="text-[11px] text-slate-400 mt-1">
-                      Suporte a arquivos PDF, PNG e JPG (máximo 15MB)
-                    </p>
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isUploadingFile || isParsingXml}
+                      className="text-xs sm:text-sm font-bold text-blue-600 hover:text-blue-700 underline underline-offset-2"
+                    >
+                      Clique para escolher o arquivo
+                    </button>
+                    <span className="text-xs sm:text-sm text-slate-500"> ou arraste aqui</span>
                   </div>
-                )}
+                  <p className="text-[11px] text-slate-400 max-w-sm">
+                    <strong>Suporta XML da NF-e</strong> (preenche todos os dados automaticamente), PDF ou fotos da Nota/Recibo (até 15MB).
+                  </p>
+                </div>
               </div>
             )}
           </div>
 
-          {/* Seção 5: Observações Adicionais */}
-          <div className="space-y-2 pt-2 border-t border-slate-100">
-            <label className="block text-xs font-bold text-slate-700">
-              Observações Adicionais / Chamados
+          {/* Observações Internas */}
+          <div className="pt-2 border-t border-slate-100">
+            <label className="block text-xs font-bold text-slate-700 mb-1">
+              Observações Gerais (Opcional)
             </label>
-            <textarea
-              rows={2}
+            <input
+              type="text"
               value={observacoes}
               onChange={(e) => setObservacoes(e.target.value)}
-              placeholder="Ex: Chamado GLPI #45892 aberto para aquisição emergencial. Aprovado pela diretoria financeira..."
-              className="w-full p-3 text-xs sm:text-sm rounded-xl border border-slate-300 bg-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition-all resize-y"
+              placeholder="Ex: Aprovado pela diretoria em reunião, garantia estendida de 2 anos..."
+              className="w-full h-10 px-3 text-xs sm:text-sm rounded-xl border border-slate-300 bg-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition-all"
             />
           </div>
-        </form>
 
-        {/* Rodapé de Ações do Modal */}
-        <div className="px-6 py-4 border-t border-slate-200/80 bg-slate-50/70 flex items-center justify-between shrink-0">
-          <p className="text-[11px] text-slate-400 hidden sm:block">
-            * Campos obrigatórios para registro fiscal
-          </p>
-
-          <div className="flex items-center gap-3 ml-auto">
+          {/* Rodapé com Botões de Ação */}
+          <div className="pt-4 border-t border-slate-200/80 flex items-center justify-end gap-3 shrink-0">
             <button
               type="button"
               onClick={onClose}
-              disabled={isSaving || isUploadingFile}
-              className="px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-200/70 transition-all disabled:opacity-50"
+              disabled={isSaving || isUploadingFile || isParsingXml}
+              className="px-5 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 transition-colors disabled:opacity-50"
             >
               Cancelar
             </button>
-
             <button
-              type="button"
-              onClick={handleSubmit}
-              disabled={isSaving || isUploadingFile}
-              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-md shadow-blue-500/20 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+              type="submit"
+              disabled={isSaving || isUploadingFile || isParsingXml}
+              className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-md shadow-blue-500/20 disabled:bg-blue-400 disabled:cursor-not-allowed transition-all"
             >
               {isSaving ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin text-white" />
-                  <span>Salvando Lançamento...</span>
-                </>
-              ) : isEditing ? (
-                <>
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Atualizar Lançamento</span>
+                  <span>Salvando no Supabase...</span>
                 </>
               ) : (
                 <>
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>Salvar Lançamento</span>
+                  <span>{isEditing ? 'Salvar Alterações' : 'Confirmar & Cadastrar Compra'}</span>
                 </>
               )}
             </button>
           </div>
-        </div>
+        </form>
       </div>
     </div>
   );
 };
-
-export default CompraModal;

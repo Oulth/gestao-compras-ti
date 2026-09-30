@@ -18,6 +18,7 @@ import {
   AlertTriangle,
   Loader2,
   Building2,
+  Copy,
 } from 'lucide-react';
 import type { Compra, TipoDespesa, StatusPagamento } from '../types';
 import { formatDate, formatCurrency, formatCnpj } from '../utils/formatters';
@@ -30,6 +31,7 @@ export interface ComprasViewProps {
   anoSelecionado?: number;
   onNovaCompra: () => void;
   onEditarCompra?: (compra: Compra) => void;
+  onDuplicarCompra?: (compra: Compra) => void;
   onExcluirCompra?: (id: string) => Promise<void> | void;
   categorias?: string[];
 }
@@ -64,6 +66,7 @@ export const ComprasView: React.FC<ComprasViewProps> = ({
   anoSelecionado,
   onNovaCompra,
   onEditarCompra,
+  onDuplicarCompra,
   onExcluirCompra,
   categorias: categoriasProp,
 }) => {
@@ -640,9 +643,19 @@ export const ComprasView: React.FC<ComprasViewProps> = ({
                       )}
                     </td>
 
-                    {/* Ações (Editar / Excluir) */}
+                    {/* Ações (Duplicar / Editar / Excluir) */}
                     <td className="no-print py-3.5 px-4 text-right whitespace-nowrap">
                       <div className="flex items-center justify-end gap-1">
+                        {onDuplicarCompra && (
+                          <button
+                            type="button"
+                            onClick={() => onDuplicarCompra(compra)}
+                            className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                            title="Duplicar compra (novo lançamento rápido com 1 clique)"
+                          >
+                            <Copy className="w-4 h-4" />
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => onEditarCompra?.(compra)}

@@ -159,6 +159,20 @@ export default function App() {
     }
   };
 
+  const handleDuplicarCompra = (compra: Compra) => {
+    // Clona os dados da compra removendo IDs antigos e resetando a data para hoje
+    const { id: _oldId, criado_em: _c, atualizado_em: _a, ...resto } = compra;
+    setCompraEmEdicao({
+      ...resto,
+      id: '',
+      data_compra: new Date().toISOString().split('T')[0],
+      link_nf: '',
+      nome_arquivo_nf: '',
+    } as any);
+    setIsModalOpen(true);
+    toast.info('Lançamento duplicado com a data de hoje. Ajuste o valor se necessário e confirme.');
+  };
+
   const handleFecharModal = () => {
     setIsModalOpen(false);
     setCompraEmEdicao(null);
@@ -268,6 +282,7 @@ export default function App() {
             anoSelecionado={anoSelecionado}
             onNovaCompra={handleNovaCompra}
             onEditarCompra={handleEditarCompra}
+            onDuplicarCompra={handleDuplicarCompra}
             onExcluirCompra={handleExcluirCompra}
           />
         )}
@@ -327,6 +342,7 @@ export default function App() {
         onClose={handleFecharModal}
         compraEmEdicao={compraEmEdicao}
         onSalvar={handleSalvarCompra}
+        comprasExistentes={compras}
       />
 
       {/* Modais de Inventário de Equipamentos */}
