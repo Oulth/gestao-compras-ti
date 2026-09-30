@@ -3,10 +3,11 @@ import { Toaster, toast } from 'sonner';
 import { Navbar, type TabType } from './components/Navbar';
 import { KPICards } from './components/KPICards';
 import { DashboardView } from './components/DashboardView';
-import { getCompras } from './services/compras';
+import { ComprasView } from './components/ComprasView';
+import { getCompras, deleteCompra } from './services/compras';
 import { calculateDashboardData } from './utils/dashboard';
 import type { Compra, DashboardData } from './types';
-import { ShoppingCart, FileSpreadsheet } from 'lucide-react';
+import { FileSpreadsheet } from 'lucide-react';
 
 export default function App() {
   const [abaAtiva, setAbaAtiva] = useState<TabType>('dashboard');
@@ -54,6 +55,22 @@ export default function App() {
     toast.info('Modal de Nova Compra será integrado na próxima etapa!');
   };
 
+  const handleEditarCompra = (compra: Compra) => {
+    toast.info(`Editar: ${compra.descricao} (${compra.codigo_ti || 'Sem código'})`);
+  };
+
+  const handleExcluirCompra = async (id: string) => {
+    try {
+      await deleteCompra(id);
+      toast.success('Compra excluída com sucesso!');
+      await carregarDados();
+    } catch (error: any) {
+      console.error('Erro ao excluir compra:', error);
+      toast.error(error.message || 'Falha ao excluir compra.');
+      throw error;
+    }
+  };
+
   const handleRecarregar = () => {
     toast.promise(carregarDados(), {
       loading: 'Sincronizando com o Supabase...',
@@ -67,16 +84,18 @@ export default function App() {
       <Toaster position="top-right" richColors />
 
       {/* Navbar Superior Institucional */}
-      <Navbar
-        abaAtiva={abaAtiva}
-        onMudarAba={setAbaAtiva}
-        anoSelecionado={anoSelecionado}
-        anosDisponiveis={anosDisponiveis}
-        onMudarAno={setAnoSelecionado}
-        onRecarregar={handleRecarregar}
-        isCarregando={isCarregando}
-        onNovaCompra={handleNovaCompra}
-      />
+      <div className="no-print">
+        <Navbar
+          abaAtiva={abaAtiva}
+          onMudarAba={setAbaAtiva}
+          anoSelecionado={anoSelecionado}
+          anosDisponiveis={anosDisponiveis}
+          onMudarAno={setAnoSelecionado}
+          onRecarregar={handleRecarregar}
+          isCarregando={isCarregando}
+          onNovaCompra={handleNovaCompra}
+        />
+      </div>
 
       {/* Conteúdo Principal */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
@@ -102,17 +121,14 @@ export default function App() {
         )}
 
         {abaAtiva === 'compras' && (
-          <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center shadow-xs">
-            <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center mx-auto mb-3">
-              <ShoppingCart className="w-6 h-6" />
-            </div>
-            <h3 className="text-lg font-bold text-slate-800">
-              Módulo de Compras & Despesas
-            </h3>
-            <p className="text-sm text-slate-500 mt-1 max-w-md mx-auto">
-              A tabela interativa com filtros, paginação, busca e exportação para Excel será ativada no próximo módulo.
-            </p>
-          </div>
+          <ComprasView
+            compras={compras}
+            isCarregando={isCarregando}
+            anoSelecionado={anoSelecionado}
+            onNovaCompra={handleNovaCompra}
+            onEditarCompra={handleEditarCompra}
+            onExcluirCompra={handleExcluirCompra}
+          />
         )}
 
         {abaAtiva === 'relatorios' && (
@@ -131,7 +147,7 @@ export default function App() {
       </main>
 
       {/* Rodapé Institucional */}
-      <footer className="border-t border-slate-200/80 bg-white py-4 mt-auto">
+      <footer className="no-print border-t border-slate-200/80 bg-white py-4 mt-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-slate-500">
           <p>© 2026 Colégio Ágape • Setor de Tecnologia da Informação</p>
           <p className="font-mono text-[11px] text-slate-400">
