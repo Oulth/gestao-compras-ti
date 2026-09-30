@@ -79,3 +79,32 @@ export interface CnpjSearchResult {
   razaoSocial: string;
   nomeFantasia: string;
 }
+
+export type StatusEquipamento =
+  | 'Em Uso'
+  | 'Disponível / Estoque'
+  | 'Em Manutenção'
+  | 'Baixado / Sucateado';
+
+export interface Equipamento {
+  id: string;
+  patrimonio: string;
+  tipo: string;
+  marca: string;
+  modelo: string;
+  numero_serie?: string | null;
+  localizacao: string;
+  status: StatusEquipamento;
+  responsavel?: string | null;
+  funcao_responsavel?: string | null;
+  compra_id?: string | null;
+  data_aquisicao?: string | null;
+  valor_estimado?: number | null;
+  especificacoes?: string | null;
+  acessorios?: string | null;
+  observacoes?: string | null;
+  criado_em?: string;
+  atualizado_em?: string;
+}
+
+export type EquipamentoInput = Omit<Equipamento, 'id' | 'criado_em' | 'atualizado_em'>;

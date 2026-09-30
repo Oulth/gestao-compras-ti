@@ -9,9 +9,10 @@ import {
   CheckCircle2,
   Calendar,
   Mail,
+  Laptop,
 } from 'lucide-react';
 
-export type TabType = 'dashboard' | 'compras' | 'relatorios';
+export type TabType = 'dashboard' | 'compras' | 'relatorios' | 'inventario';
 
 export interface NavbarProps {
   abaAtiva: TabType;
@@ -142,6 +143,19 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <FileSpreadsheet className="w-4 h-4" />
               <span>Relatórios</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onMudarAba('inventario')}
+              className={`flex items-center gap-2 px-3.5 py-1.5 text-xs sm:text-sm font-semibold rounded-lg transition-all duration-150 ${
+                abaAtiva === 'inventario'
+                  ? 'bg-white text-indigo-700 shadow-xs font-bold'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+              }`}
+            >
+              <Laptop className="w-4 h-4 text-indigo-600" />
+              <span>Inventário</span>
             </button>
           </nav>
 
