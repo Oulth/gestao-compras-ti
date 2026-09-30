@@ -22,6 +22,7 @@ export interface NavbarProps {
   onRecarregar: () => void;
   isCarregando?: boolean;
   onNovaCompra: () => void;
+  isRealtimeConnected?: boolean;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -33,6 +34,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onRecarregar,
   isCarregando = false,
   onNovaCompra,
+  isRealtimeConnected = true,
 }) => {
   return (
     <header className="sticky top-0 z-40 w-full bg-white/95 backdrop-blur border-b border-slate-200/80 shadow-xs">
@@ -61,17 +63,34 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Status & Contato Institucional */}
           <div className="flex items-center flex-wrap gap-2.5">
-            {/* Status do Supabase */}
+            {/* Status do Supabase Realtime */}
             <div
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80 shadow-2xs"
-              title="Banco de dados Supabase conectado em tempo real"
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border shadow-2xs transition-colors duration-200 ${
+                isRealtimeConnected
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200/80'
+                  : 'bg-amber-50 text-amber-700 border-amber-200/80'
+              }`}
+              title={
+                isRealtimeConnected
+                  ? 'Banco de dados Supabase sincronizado em tempo real via Realtime'
+                  : 'Sincronizando / Conectando com Supabase...'
+              }
             >
               <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                {isRealtimeConnected ? (
+                  <>
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </>
+                ) : (
+                  <>
+                    <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                  </>
+                )}
               </span>
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Supabase Conectado</span>
+              <CheckCircle2 className={`w-3.5 h-3.5 ${isRealtimeConnected ? 'text-emerald-600' : 'text-amber-600'}`} />
+              <span>{isRealtimeConnected ? 'Supabase Realtime Ativo' : 'Conectando Supabase...'}</span>
             </div>
 
             {/* Email Institucional */}

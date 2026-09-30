@@ -7,6 +7,7 @@ import { ComprasView } from './components/ComprasView';
 import { CompraModal } from './components/CompraModal';
 import { RelatoriosView } from './components/RelatoriosView';
 import { getCompras, deleteCompra, saveCompra } from './services/compras';
+import { supabase } from './services/supabase';
 import { calculateDashboardData } from './utils/dashboard';
 import type { Compra, CompraInput, DashboardData } from './types';
 
@@ -15,12 +16,15 @@ export default function App() {
   const [anoSelecionado, setAnoSelecionado] = useState<number>(2026);
   const [compras, setCompras] = useState<Compra[]>([]);
   const [isCarregando, setIsCarregando] = useState<boolean>(true);
+  const [isRealtimeConnected, setIsRealtimeConnected] = useState<boolean>(false);
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [compraEmEdicao, setCompraEmEdicao] = useState<Compra | null>(null);
 
   // Carrega compras do Supabase
-  const carregarDados = useCallback(async () => {
-    setIsCarregando(true);
+  const carregarDados = useCallback(async (mostrarLoading: boolean = true) => {
+    if (mostrarLoading) {
+      setIsCarregando(true);
+    }
     try {
       // Carregamos todas as compras para permitir análise de garantias e anos
       const data = await getCompras();
@@ -29,12 +33,38 @@ export default function App() {
       console.error('Erro ao carregar dados:', error);
       toast.error('Erro ao carregar dados do Supabase. Verifique a conexão.');
     } finally {
-      setIsCarregando(false);
+      if (mostrarLoading) {
+        setIsCarregando(false);
+      }
     }
   }, []);
 
   useEffect(() => {
-    carregarDados();
+    // Carregamento inicial de dados
+    carregarDados(true);
+
+    // Supabase Realtime subscription na tabela public:compras
+    const channel = supabase
+      .channel('public:compras')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'compras' },
+        (payload) => {
+          console.log('[Supabase Realtime] Alteração na tabela compras:', payload);
+          carregarDados(false);
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          setIsRealtimeConnected(true);
+        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+          setIsRealtimeConnected(false);
+        }
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [carregarDados]);
 
   // Anos disponíveis computados dinamicamente com base nas compras cadastradas + anos padrão
@@ -118,6 +148,13 @@ export default function App() {
     <div className="min-h-screen bg-slate-50/70 text-slate-900 flex flex-col font-sans antialiased">
       <Toaster position="top-right" richColors />
 
+      {/* Barra sutil de carregamento / sincronização no topo */}
+      {isCarregando && (
+        <div className="w-full bg-blue-100/50 h-0.5 overflow-hidden fixed top-0 left-0 right-0 z-50">
+          <div className="h-full bg-blue-600 animate-pulse w-full" />
+        </div>
+      )}
+
       {/* Navbar Superior Institucional */}
       <div className="no-print">
         <Navbar
@@ -129,6 +166,7 @@ export default function App() {
           onRecarregar={handleRecarregar}
           isCarregando={isCarregando}
           onNovaCompra={handleNovaCompra}
+          isRealtimeConnected={isRealtimeConnected}
         />
       </div>
 
@@ -179,11 +217,29 @@ export default function App() {
 
       {/* Rodapé Institucional */}
       <footer className="no-print border-t border-slate-200/80 bg-white py-4 mt-auto">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-slate-500">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
           <p>© 2026 Colégio Ágape • Setor de Tecnologia da Informação</p>
-          <p className="font-mono text-[11px] text-slate-400">
-            Ambiente de Produção • Supabase v2 • Recharts
-          </p>
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-center">
+            <span
+              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${
+                isRealtimeConnected
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200/80'
+                  : 'bg-amber-50 text-amber-700 border-amber-200/80'
+              }`}
+            >
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${
+                  isRealtimeConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
+                }`}
+              />
+              {isRealtimeConnected
+                ? 'Sincronização em Tempo Real Ativa'
+                : 'Conectando ao Supabase Realtime...'}
+            </span>
+            <p className="font-mono text-[11px] text-slate-400">
+              Ambiente de Produção • Supabase v2 • Recharts
+            </p>
+          </div>
         </div>
       </footer>
 
