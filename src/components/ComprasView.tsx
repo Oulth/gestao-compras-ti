@@ -24,6 +24,7 @@ import type { Compra, TipoDespesa, StatusPagamento } from '../types';
 import { formatDate, formatCurrency, formatCnpj } from '../utils/formatters';
 import { exportarParaExcel } from '../utils/exportExcel';
 import { getConfiguracoes, DEFAULT_CONFIGURACOES } from '../services/compras';
+import { verificarDuplicidade } from '../utils/duplicidadeDetector';
 
 export interface ComprasViewProps {
   compras: Compra[];
@@ -82,6 +83,9 @@ export const ComprasView: React.FC<ComprasViewProps> = ({
   // Categorias disponíveis
   const [categoriasLista, setCategoriasLista] = useState<string[]>([]);
 
+  // Filtro de duplicadas detectadas
+  const [apenasDuplicadas, setApenasDuplicadas] = useState<boolean>(false);
+
   // Estado do Modal de Exclusão
   const [compraParaExcluir, setCompraParaExcluir] = useState<Compra | null>(null);
   const [isExcluindo, setIsExcluindo] = useState<boolean>(false);
@@ -117,6 +121,33 @@ export const ComprasView: React.FC<ComprasViewProps> = ({
       });
   }, [categoriasProp, compras]);
 
+  // Identifica compras duplicadas para exibir alerta visual
+  const comprasDuplicadasIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (let i = 0; i < compras.length; i++) {
+      for (let j = i + 1; j < compras.length; j++) {
+        const a = compras[i];
+        const b = compras[j];
+        const res = verificarDuplicidade(
+          {
+            codigo_ti: a.codigo_ti,
+            fornecedor: a.fornecedor,
+            cnpj: a.cnpj,
+            valor: a.valor,
+            data_compra: a.data_compra,
+            nome_arquivo_nf: a.nome_arquivo_nf,
+          },
+          [b]
+        );
+        if (res.isDuplicada) {
+          ids.add(a.id);
+          ids.add(b.id);
+        }
+      }
+    }
+    return ids;
+  }, [compras]);
+
   // Lista de anos extraídos das compras para o filtro de ano
   const anosDisponiveis = useMemo(() => {
     const anosSet = new Set<string>();
@@ -133,6 +164,11 @@ export const ComprasView: React.FC<ComprasViewProps> = ({
   // Filtragem de dados
   const comprasFiltradas = useMemo(() => {
     return compras.filter((c) => {
+      // Filtro de Apenas Duplicadas
+      if (apenasDuplicadas && !comprasDuplicadasIds.has(c.id)) {
+        return false;
+      }
+
       // Filtro de Ano
       if (anoFiltro !== 'todos') {
         const anoCompra = c.data_compra ? c.data_compra.slice(0, 4) : '';
@@ -177,7 +213,7 @@ export const ComprasView: React.FC<ComprasViewProps> = ({
 
       return true;
     });
-  }, [compras, anoFiltro, mesFiltro, tipoFiltro, categoriaFiltro, busca]);
+  }, [compras, apenasDuplicadas, comprasDuplicadasIds, anoFiltro, mesFiltro, tipoFiltro, categoriaFiltro, busca]);
 
   // Totalizador filtrado
   const totalFiltrado = useMemo(() => {
@@ -186,6 +222,7 @@ export const ComprasView: React.FC<ComprasViewProps> = ({
 
   // Indicador de filtros ativos
   const filtrosAtivos =
+    apenasDuplicadas ||
     busca.trim() !== '' ||
     tipoFiltro !== 'todos' ||
     categoriaFiltro !== 'todos' ||
@@ -193,6 +230,7 @@ export const ComprasView: React.FC<ComprasViewProps> = ({
     (anoSelecionado ? anoFiltro !== String(anoSelecionado) : anoFiltro !== 'todos');
 
   const limparFiltros = () => {
+    setApenasDuplicadas(false);
     setBusca('');
     setTipoFiltro('todos');
     setCategoriaFiltro('todos');
@@ -452,12 +490,29 @@ export const ComprasView: React.FC<ComprasViewProps> = ({
             </select>
           )}
 
+          {/* Botão de Filtro de Duplicadas Detectadas */}
+          {comprasDuplicadasIds.size > 0 && (
+            <button
+              type="button"
+              onClick={() => setApenasDuplicadas(!apenasDuplicadas)}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
+                apenasDuplicadas
+                  ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                  : 'bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100'
+              }`}
+              title="Filtrar lançamentos repetidos com mesma NF ou mesmos dados financeiros"
+            >
+              <AlertTriangle className={`w-3.5 h-3.5 ${apenasDuplicadas ? 'text-white' : 'text-amber-600'}`} />
+              <span>{apenasDuplicadas ? 'Exibindo Duplicadas' : `${comprasDuplicadasIds.size} Duplicadas`}</span>
+            </button>
+          )}
+
           {/* Botão Limpar Filtros */}
           {filtrosAtivos && (
             <button
               type="button"
               onClick={limparFiltros}
-              className="inline-flex items-center gap-1 px-2.5 py-1 text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors font-medium ml-auto"
+              className="inline-flex items-center gap-1 px-2.5 py-1 text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors font-medium ml-auto cursor-pointer"
             >
               <X className="w-3 h-3" />
               <span>Limpar Filtros</span>
@@ -573,10 +628,19 @@ export const ComprasView: React.FC<ComprasViewProps> = ({
 
                     {/* Descrição */}
                     <td className="py-3.5 px-4">
-                      <div className="flex items-start gap-1.5">
+                      <div className="flex items-start gap-1.5 flex-wrap">
                         {compra.codigo_ti && (
                           <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-100 text-slate-600 border border-slate-200 shrink-0 mt-0.5">
                             {compra.codigo_ti}
+                          </span>
+                        )}
+                        {comprasDuplicadasIds.has(compra.id) && (
+                          <span
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 shrink-0 mt-0.5"
+                            title="Atenção: Existe outro lançamento cadastrado com a mesma Nota Fiscal ou dados financeiros idênticos"
+                          >
+                            <AlertTriangle className="w-3 h-3 text-amber-600" />
+                            Duplicada?
                           </span>
                         )}
                         <span className="text-slate-800 font-medium leading-relaxed">

@@ -19,6 +19,7 @@ import {
   Banknote,
   CalendarDays,
   Info,
+  AlertTriangle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
@@ -35,6 +36,7 @@ import { formatCurrency, formatCnpj, formatDate } from '../utils/formatters';
 import { parseNfeXml } from '../utils/nfeParser';
 import { parseNfsePdf } from '../utils/pdfParser';
 import { MODELOS_COMPRAS_RAPIDAS, type ModeloCompraRapida } from '../utils/presetsCompras';
+import { verificarDuplicidade, type ResultadoDuplicidade } from '../utils/duplicidadeDetector';
 
 export interface CompraModalProps {
   isOpen: boolean;
@@ -144,6 +146,8 @@ export const CompraModal: React.FC<CompraModalProps> = ({
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [ignorarAvisoDuplicidade, setIgnorarAvisoDuplicidade] = useState<boolean>(false);
+  const [isConfirmandoDuplicidadeModal, setIsConfirmandoDuplicidadeModal] = useState<boolean>(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const xmlInputRef = useRef<HTMLInputElement>(null);
@@ -260,6 +264,8 @@ export const CompraModal: React.FC<CompraModalProps> = ({
       setMesesPersonalizados(12);
       setGerarMensalidadesFuturas(true);
     }
+    setIgnorarAvisoDuplicidade(false);
+    setIsConfirmandoDuplicidadeModal(false);
     setErrors({});
   }, [isOpen, compraEmEdicao]);
 
@@ -373,6 +379,26 @@ export const CompraModal: React.FC<CompraModalProps> = ({
         `✨ NF-e Nº ${dadosNfe.numeroNf || 'importada'} processada! ${dadosNfe.fornecedor} • ${formatCurrency(Number(dadosNfe.valor) || 0)}`
       );
 
+      // Verificação imediata de duplicidade do XML
+      setIgnorarAvisoDuplicidade(false);
+      const dupCheckXml = verificarDuplicidade(
+        {
+          codigo_ti: dadosNfe.codigoTi,
+          fornecedor: dadosNfe.fornecedor,
+          cnpj: dadosNfe.cnpj,
+          valor: dadosNfe.valor,
+          data_compra: dadosNfe.dataCompra,
+          nome_arquivo_nf: file.name,
+        },
+        comprasExistentes
+      );
+      if (dupCheckXml.isDuplicada) {
+        toast.warning(
+          `⚠️ Atenção: Esta Nota Fiscal já foi cadastrada anteriormente no sistema! (${dupCheckXml.compraExistente?.codigo_ti || 'NF Existente'})`,
+          { duration: 6000 }
+        );
+      }
+
       setErrors({});
 
       setIsUploadingFile(true);
@@ -470,6 +496,27 @@ export const CompraModal: React.FC<CompraModalProps> = ({
           }
           setCategoria('Suporte & Serviços Especializados');
           toast.success(`✨ PDF da NFS-e Nº ${dadosNfse.numeroNfs || 'importada'} lido com sucesso! ${dadosNfse.prestador} • ${formatCurrency(Number(dadosNfse.valor) || 0)}`);
+
+          // Verificação imediata de duplicidade do PDF
+          setIgnorarAvisoDuplicidade(false);
+          const dupCheckPdf = verificarDuplicidade(
+            {
+              codigo_ti: dadosNfse.codigoTi,
+              fornecedor: dadosNfse.prestador,
+              cnpj: dadosNfse.cnpj,
+              valor: dadosNfse.valor,
+              data_compra: dadosNfse.dataCompra,
+              nome_arquivo_nf: file.name,
+            },
+            comprasExistentes
+          );
+          if (dupCheckPdf.isDuplicada) {
+            toast.warning(
+              `⚠️ Atenção: Esta Nota Fiscal de Serviço já foi cadastrada anteriormente no sistema! (${dupCheckPdf.compraExistente?.codigo_ti || 'NFS Existente'})`,
+              { duration: 6000 }
+            );
+          }
+
           setErrors({});
         }
       } catch (pdfErr) {
@@ -556,6 +603,25 @@ export const CompraModal: React.FC<CompraModalProps> = ({
     return addMonths(dataCompra, mesesRecorrentesCalculados - 1);
   }, [dataCompra, mesesRecorrentesCalculados]);
 
+  // Verificação inteligente de duplicidade em tempo real
+  const duplicidadeAtual: ResultadoDuplicidade = useMemo(() => {
+    if (compraEmEdicao?.id) return { isDuplicada: false };
+    if (!fornecedor.trim() && !codigoTi.trim() && !nomeArquivoNf.trim()) return { isDuplicada: false };
+
+    return verificarDuplicidade(
+      {
+        codigo_ti: codigoTi,
+        fornecedor,
+        cnpj,
+        valor: valorNumerico,
+        data_compra: dataCompra,
+        nome_arquivo_nf: nomeArquivoNf,
+      },
+      comprasExistentes,
+      compraEmEdicao?.id
+    );
+  }, [compraEmEdicao, fornecedor, codigoTi, cnpj, valorNumerico, dataCompra, nomeArquivoNf, comprasExistentes]);
+
   // Validação do formulário
   const validarFormulario = (): boolean => {
     const novosErros: Record<string, string> = {};
@@ -592,15 +658,8 @@ export const CompraModal: React.FC<CompraModalProps> = ({
     return Object.keys(novosErros).length === 0;
   };
 
-  // Submissão do formulário (com suporte a desmembramento em lote de parcelas e recorrências)
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!validarFormulario()) {
-      toast.error('Preencha todos os campos obrigatórios destacados.');
-      return;
-    }
-
+  // Executa o salvamento no banco Supabase
+  const executarSalvamento = async () => {
     setIsSaving(true);
     try {
       const isEditing = Boolean(compraEmEdicao?.id);
@@ -752,6 +811,26 @@ export const CompraModal: React.FC<CompraModalProps> = ({
     }
   };
 
+  // Submissão do formulário com verificação e confirmação anti-duplicidade
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (isSaving || isUploadingFile || isParsingXml) return;
+
+    if (!validarFormulario()) {
+      toast.error('Preencha todos os campos obrigatórios destacados.');
+      return;
+    }
+
+    // Se detectada duplicidade e o usuário ainda não confirmou explicitamente
+    if (!compraEmEdicao && duplicidadeAtual.isDuplicada && !ignorarAvisoDuplicidade) {
+      setIsConfirmandoDuplicidadeModal(true);
+      return;
+    }
+
+    await executarSalvamento();
+  };
+
   if (!isOpen) return null;
 
   const isEditing = Boolean(compraEmEdicao);
@@ -868,6 +947,85 @@ export const CompraModal: React.FC<CompraModalProps> = ({
                       </span>
                     </button>
                   ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* AVISO DE NOTA FISCAL DUPLICADA DETECTADA */}
+          {duplicidadeAtual.isDuplicada && !ignorarAvisoDuplicidade && (
+            <div className="rounded-2xl border-2 border-amber-300 bg-amber-50/95 p-4 shadow-sm animate-in fade-in slide-in-from-top-2">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-sm shadow-amber-500/20">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-sm font-bold text-amber-950">
+                      Atenção: Possível Nota Fiscal Duplicada Detectada!
+                    </h4>
+                    <span className="px-2 py-0.5 text-[10px] font-bold uppercase rounded-md bg-amber-200 text-amber-900 border border-amber-300">
+                      Já Cadastrada
+                    </span>
+                  </div>
+                  <p className="text-xs text-amber-800 mt-1 font-medium leading-relaxed">
+                    {duplicidadeAtual.descricaoMotivo}
+                  </p>
+
+                  {duplicidadeAtual.compraExistente && (
+                    <div className="mt-2.5 p-2.5 rounded-xl bg-white/90 border border-amber-200 text-xs grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <div>
+                        <span className="text-slate-400 block text-[10px] font-bold">Lançamento Existente:</span>
+                        <span className="font-bold text-slate-800 font-mono">
+                          {duplicidadeAtual.compraExistente.codigo_ti || 'Sem Código'}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block text-[10px] font-bold">Data da Compra:</span>
+                        <span className="font-semibold text-slate-700">
+                          {formatDate(duplicidadeAtual.compraExistente.data_compra)}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block text-[10px] font-bold">Valor Cadastrado:</span>
+                        <span className="font-bold text-emerald-700 font-mono">
+                          {formatCurrency(duplicidadeAtual.compraExistente.valor)}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCodigoTi('');
+                        setFornecedor('');
+                        setCnpj('');
+                        setValor('');
+                        setDataCompra(new Date().toISOString().split('T')[0]);
+                        setDescricao('');
+                        setLinkNf('');
+                        setNomeArquivoNf('');
+                        setObservacoes('');
+                        setIgnorarAvisoDuplicidade(false);
+                        toast.info('Formulário limpo para nova digitação.');
+                      }}
+                      className="px-3 py-1.5 text-xs font-bold text-amber-900 bg-amber-200 hover:bg-amber-300 rounded-lg transition-colors cursor-pointer"
+                    >
+                      Limpar e Cancelar Importação
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIgnorarAvisoDuplicidade(true);
+                        toast.warning('Aviso ignorado. O lançamento poderá ser cadastrado.');
+                      }}
+                      className="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-100 border border-amber-300 rounded-lg transition-colors cursor-pointer"
+                    >
+                      Ignorar e Cadastrar Mesmo Assim (2ª Via / Nova Compra)
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1636,6 +1794,89 @@ export const CompraModal: React.FC<CompraModalProps> = ({
           </div>
         </form>
       </div>
+
+      {/* Modal de Confirmação de Duplicidade */}
+      {isConfirmandoDuplicidadeModal && duplicidadeAtual.compraExistente && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-[60] overflow-y-auto bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl border-2 border-amber-300 p-6 space-y-4 animate-in zoom-in-95">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 shadow-sm">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">
+                  Duplicidade de Nota Fiscal Detectada!
+                </h3>
+                <p className="text-xs text-slate-500 font-medium">
+                  Esta compra já possui um registro idêntico no banco.
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-amber-50 rounded-xl p-3.5 border border-amber-200 text-xs space-y-2 text-slate-700">
+              <p className="font-semibold text-amber-900 leading-snug">
+                {duplicidadeAtual.descricaoMotivo}
+              </p>
+              <div className="pt-2 border-t border-amber-200/80 grid grid-cols-2 gap-2 text-[11px]">
+                <div>
+                  <span className="text-slate-400 block font-medium">Código / NF:</span>
+                  <span className="font-mono font-bold text-slate-800">
+                    {duplicidadeAtual.compraExistente.codigo_ti || 'S/N'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block font-medium">Valor Já Cadastrado:</span>
+                  <span className="font-mono font-bold text-emerald-700">
+                    {formatCurrency(duplicidadeAtual.compraExistente.valor)}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block font-medium">Data do Registro:</span>
+                  <span className="font-medium text-slate-700">
+                    {formatDate(duplicidadeAtual.compraExistente.data_compra)}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block font-medium">Fornecedor:</span>
+                  <span className="font-medium text-slate-700 truncate block" title={duplicidadeAtual.compraExistente.fornecedor}>
+                    {duplicidadeAtual.compraExistente.fornecedor}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 font-medium leading-relaxed">
+              Deseja salvar mesmo assim (lançar nova via repetida) ou cancelar para evitar duplicidade financeira no relatório anual?
+            </p>
+
+            <div className="flex flex-col sm:flex-row items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsConfirmandoDuplicidadeModal(false)}
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs font-bold transition-colors cursor-pointer"
+              >
+                Cancelar e Não Salvar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIgnorarAvisoDuplicidade(true);
+                  setIsConfirmandoDuplicidadeModal(false);
+                  executarSalvamento();
+                }}
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-md shadow-amber-600/20 transition-colors cursor-pointer"
+              >
+                Sim, Salvar Lançamento Repetido
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
