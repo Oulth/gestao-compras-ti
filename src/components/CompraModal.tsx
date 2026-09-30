@@ -34,7 +34,7 @@ import { uploadComprovanteNf, deleteComprovanteNf } from '../services/storage';
 import { DEFAULT_CONFIGURACOES, getConfiguracoes } from '../services/compras';
 import { formatCurrency, formatCnpj, formatDate } from '../utils/formatters';
 import { parseNfeXml } from '../utils/nfeParser';
-import { parseNfsePdf } from '../utils/pdfParser';
+import { parseNotaFiscalPdf } from '../utils/pdfParser';
 import { MODELOS_COMPRAS_RAPIDAS, type ModeloCompraRapida } from '../utils/presetsCompras';
 import { verificarDuplicidade, type ResultadoDuplicidade } from '../utils/duplicidadeDetector';
 
@@ -472,47 +472,77 @@ export const CompraModal: React.FC<CompraModalProps> = ({
       return;
     }
 
-    // 2. Arquivo PDF: Leitura inteligente se for NFS-e / DANFSe
+    // 2. Arquivo PDF: Leitura inteligente (DANFE - Produtos ou DANFSe - Serviços)
     if (file.name.toLowerCase().endsWith('.pdf') || file.type === 'application/pdf') {
       setIsParsingXml(true);
       try {
-        const dadosNfse = await parseNfsePdf(file);
-        if (dadosNfse && dadosNfse.prestador) {
-          setFornecedor(dadosNfse.prestador);
-          if (dadosNfse.cnpj) setCnpj(formatCnpj(dadosNfse.cnpj));
-          if (dadosNfse.numeroNfs) setCodigoTi(dadosNfse.codigoTi);
-          if (dadosNfse.dataCompra) setDataCompra(dadosNfse.dataCompra);
-          if (dadosNfse.descricao) setDescricao(dadosNfse.descricao);
-          if (dadosNfse.valor) setValor(dadosNfse.valor);
-          if (dadosNfse.formaPagamento) setFormaPagamento(dadosNfse.formaPagamento);
-          if (dadosNfse.observacoes) setObservacoes(dadosNfse.observacoes);
+        const dadosPdf = await parseNotaFiscalPdf(file);
+        if (dadosPdf && (dadosPdf.fornecedor || dadosPdf.numeroNf)) {
+          if (dadosPdf.fornecedor) setFornecedor(dadosPdf.fornecedor);
+          if (dadosPdf.cnpj) setCnpj(formatCnpj(dadosPdf.cnpj));
+          if (dadosPdf.codigoTi) setCodigoTi(dadosPdf.codigoTi);
+          if (dadosPdf.dataCompra) setDataCompra(dadosPdf.dataCompra);
+          if (dadosPdf.descricao) setDescricao(dadosPdf.descricao);
+          if (dadosPdf.valor) setValor(dadosPdf.valor);
+          if (dadosPdf.formaPagamento) setFormaPagamento(dadosPdf.formaPagamento);
+          if (dadosPdf.observacoes) setObservacoes(dadosPdf.observacoes);
 
-          const descLower = (dadosNfse.descricao + ' ' + dadosNfse.prestador).toLowerCase();
-          if (descLower.includes('contrato') || descLower.includes('manuten') || descLower.includes('mensal')) {
-            setTipo('Contrato Mensal');
-            setModalidadePagamento('recorrente_mensal');
+          const descLower = (dadosPdf.descricao + ' ' + dadosPdf.fornecedor).toLowerCase();
+
+          if (dadosPdf.tipoDocumento === 'NFE_PRODUTO') {
+            setTipo('Produto');
+            if (descLower.includes('toner') || descLower.includes('tinta') || descLower.includes('bobina') || descLower.includes('cartucho')) {
+              setCategoria('Impressoras & Suprimentos (Toners, Peças)');
+            } else if (descLower.includes('cabo') || descLower.includes('patch') || descLower.includes('rj45') || descLower.includes('switch') || descLower.includes('roteador')) {
+              setCategoria('Redes & Conectividade (Switches, Roteadores, Cabos)');
+            } else if (descLower.includes('ssd') || descLower.includes('memoria') || descLower.includes('notebook') || descLower.includes('computador') || descLower.includes('termica') || descLower.includes('elgin')) {
+              setCategoria('Hardware (PCs, Notebooks, Servidores)');
+            } else {
+              setCategoria('Acessórios & Periféricos');
+            }
+
+            if (dadosPdf.numParcelas && dadosPdf.numParcelas > 1) {
+              setModalidadePagamento('parcelado');
+              setNumParcelas(dadosPdf.numParcelas);
+              setStatusPagamento('Parcelado');
+            } else {
+              setModalidadePagamento('a_vista');
+            }
+
+            toast.success(
+              `✨ DANFE (NF-e) Nº ${dadosPdf.numeroNf || 'importada'} lido com sucesso! ${dadosPdf.fornecedor} • ${formatCurrency(Number(dadosPdf.valor) || 0)}`
+            );
           } else {
-            setTipo('Serviço');
+            // NFSE_SERVICO
+            if (descLower.includes('contrato') || descLower.includes('manuten') || descLower.includes('mensal')) {
+              setTipo('Contrato Mensal');
+              setModalidadePagamento('recorrente_mensal');
+            } else {
+              setTipo('Serviço');
+              setModalidadePagamento('a_vista');
+            }
+            setCategoria('Suporte & Serviços Especializados');
+            toast.success(
+              `✨ NFS-e Nº ${dadosPdf.numeroNf || 'importada'} lida com sucesso! ${dadosPdf.fornecedor} • ${formatCurrency(Number(dadosPdf.valor) || 0)}`
+            );
           }
-          setCategoria('Suporte & Serviços Especializados');
-          toast.success(`✨ PDF da NFS-e Nº ${dadosNfse.numeroNfs || 'importada'} lido com sucesso! ${dadosNfse.prestador} • ${formatCurrency(Number(dadosNfse.valor) || 0)}`);
 
           // Verificação imediata de duplicidade do PDF
           setIgnorarAvisoDuplicidade(false);
           const dupCheckPdf = verificarDuplicidade(
             {
-              codigo_ti: dadosNfse.codigoTi,
-              fornecedor: dadosNfse.prestador,
-              cnpj: dadosNfse.cnpj,
-              valor: dadosNfse.valor,
-              data_compra: dadosNfse.dataCompra,
+              codigo_ti: dadosPdf.codigoTi,
+              fornecedor: dadosPdf.fornecedor,
+              cnpj: dadosPdf.cnpj,
+              valor: dadosPdf.valor,
+              data_compra: dadosPdf.dataCompra,
               nome_arquivo_nf: file.name,
             },
             comprasExistentes
           );
           if (dupCheckPdf.isDuplicada) {
             toast.warning(
-              `⚠️ Atenção: Esta Nota Fiscal de Serviço já foi cadastrada anteriormente no sistema! (${dupCheckPdf.compraExistente?.codigo_ti || 'NFS Existente'})`,
+              `⚠️ Atenção: Esta Nota Fiscal já foi cadastrada anteriormente no sistema! (${dupCheckPdf.compraExistente?.codigo_ti || 'NF Existente'})`,
               { duration: 6000 }
             );
           }
