@@ -1,0 +1,843 @@
+<script>
+  /**
+   * ESTADO GLOBAL DA APLICAÇÃO
+   */
+  let appState = {
+    settings: {},
+    allPurchases: [],
+    filteredPurchases: [],
+    dashboardData: {},
+    selectedYear: new Date().getFullYear(),
+    charts: {
+      mensal: null,
+      categorias: null
+    },
+    uploadedFilePayload: null
+  };
+
+  const modalCompraEl = document.getElementById('modalCompra');
+  let modalCompraInstance = null;
+
+  // Inicialização
+  document.addEventListener('DOMContentLoaded', () => {
+    modalCompraInstance = new bootstrap.Modal(modalCompraEl);
+    setupDropZone();
+    carregarDadosGerais();
+  });
+
+  /**
+   * Mostra / Oculta o Overlay de Carregamento
+   */
+  function setLoading(show, text = 'Carregando dados...') {
+    const overlay = document.getElementById('loadingOverlay');
+    const textEl = document.getElementById('loadingText');
+    if (overlay && textEl) {
+      textEl.innerText = text;
+      overlay.style.display = show ? 'flex' : 'none';
+    }
+  }
+
+  /**
+   * Formatação de Moeda BRL
+   */
+  function formatMoney(value) {
+    return new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency: 'BRL'
+    }).format(Number(value) || 0);
+  }
+
+  /**
+   * Formatação de Data DD/MM/AAAA
+   */
+  function formatDateBr(dateStr) {
+    if (!dateStr) return '-';
+    const parts = dateStr.split('-');
+    if (parts.length === 3) {
+      return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    }
+    return dateStr;
+  }
+
+  /**
+   * Formatação de CNPJ
+   */
+  function formatarCNPJ(v) {
+    if (!v) return '';
+    v = v.replace(/\D/g, "");
+    if (v.length > 14) v = v.substring(0, 14);
+    v = v.replace(/^(\d{2})(\d)/, "$1.$2");
+    v = v.replace(/^(\d{2})\.(\d{3})(\d)/, "$1.$2.$3");
+    v = v.replace(/\.(\d{3})(\d)/, ".$1/$2");
+    v = v.replace(/(\d{4})(\d)/, "$1-$2");
+    return v;
+  }
+
+  function formatarCNPJInput(input) {
+    input.value = formatarCNPJ(input.value);
+  }
+
+  /**
+   * Carrega todos os dados iniciais do Google Apps Script
+   */
+  function carregarDadosGerais() {
+    setLoading(true, 'Conectando ao Google Sheets e Drive...');
+
+    // 1. Obter Configurações
+    google.script.run
+      .withSuccessHandler((settings) => {
+        appState.settings = settings;
+        popularSelectsConfig(settings);
+
+        // 2. Obter Compras
+        google.script.run
+          .withSuccessHandler((purchases) => {
+            appState.allPurchases = purchases;
+            atualizarTabelaCompras();
+
+            // 3. Obter Dashboard
+            carregarDashboard(appState.selectedYear);
+          })
+          .withFailureHandler(handleError)
+          .getAllPurchases();
+      })
+      .withFailureHandler(handleError)
+      .getAppSettings();
+  }
+
+  /**
+   * Popula selects de categorias, centros de custo, formas de pagamento
+   */
+  function popularSelectsConfig(settings) {
+    // Categorias no Modal
+    const selectCat = document.getElementById('compraCategoria');
+    const filtroCat = document.getElementById('filtroCategoria');
+    selectCat.innerHTML = '';
+    filtroCat.innerHTML = '<option value="">Todas Categorias</option>';
+    
+    (settings.categories || []).forEach(cat => {
+      selectCat.add(new Option(cat, cat));
+      filtroCat.add(new Option(cat, cat));
+    });
+
+    // Centros de Custo
+    const selectCC = document.getElementById('compraCentroCusto');
+    selectCC.innerHTML = '';
+    (settings.costCenters || []).forEach(cc => {
+      selectCC.add(new Option(cc, cc));
+    });
+
+    // Formas de Pagamento
+    const selectPgto = document.getElementById('compraFormaPgto');
+    selectPgto.innerHTML = '';
+    (settings.paymentMethods || []).forEach(fp => {
+      selectPgto.add(new Option(fp, fp));
+    });
+  }
+
+  /**
+   * Carrega e renderiza o Dashboard
+   */
+  function carregarDashboard(ano) {
+    setLoading(true, 'Atualizando indicadores e gráficos...');
+
+    google.script.run
+      .withSuccessHandler((data) => {
+        setLoading(false);
+        appState.dashboardData = data;
+        appState.selectedYear = data.selectedYear;
+
+        // Atualiza Badges de Ano
+        document.querySelectorAll('.badgeAno').forEach(el => el.innerText = data.selectedYear);
+
+        // Atualiza Selector de Anos
+        const anoSelect = document.getElementById('filtroAnoGlobal');
+        anoSelect.innerHTML = '';
+        data.availableYears.forEach(y => {
+          const opt = new Option(y, y);
+          if (y === data.selectedYear) opt.selected = true;
+          anoSelect.add(opt);
+        });
+
+        // KPIs
+        document.getElementById('kpiTotalAno').innerText = formatMoney(data.totalAno);
+        document.getElementById('kpiTotalMes').innerText = formatMoney(data.totalMesAtual);
+        document.getElementById('kpiMediaMensal').innerText = formatMoney(data.mediaMensal);
+        document.getElementById('kpiGarantiasCount').innerText = (data.upcomingWarranties || []).length;
+
+        // Gráficos
+        renderizarGraficoMensal(data.monthlyTotals);
+        renderizarGraficoCategorias(data.categoryTotals);
+
+        // Top Fornecedores
+        renderizarTopFornecedores(data.topSuppliers, data.totalAno);
+
+        // Alertas de Garantia
+        renderizarAlertasGarantia(data.upcomingWarranties);
+
+        // Relatórios Consolidados
+        renderizarRelatorios(data);
+      })
+      .withFailureHandler(handleError)
+      .getDashboardData(ano);
+  }
+
+  function onAnoGlobalChange() {
+    const ano = document.getElementById('filtroAnoGlobal').value;
+    appState.selectedYear = parseInt(ano);
+    carregarDashboard(appState.selectedYear);
+    filtrarTabelaCompras();
+  }
+
+  /**
+   * Renderiza o Gráfico de Evolução Mensal (Chart.js)
+   */
+  function renderizarGraficoMensal(monthlyTotals) {
+    const ctx = document.getElementById('chartMensal').getContext('2d');
+    const meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+
+    if (appState.charts.mensal) {
+      appState.charts.mensal.destroy();
+    }
+
+    appState.charts.mensal = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: meses,
+        datasets: [{
+          label: 'Total em Compras (R$)',
+          data: monthlyTotals,
+          backgroundColor: 'rgba(37, 99, 235, 0.75)',
+          borderColor: '#1d4ed8',
+          borderWidth: 1.5,
+          borderRadius: 6,
+          hoverBackgroundColor: 'rgba(29, 78, 216, 0.9)'
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: (item) => ' ' + formatMoney(item.raw)
+            }
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            ticks: {
+              callback: (val) => 'R$ ' + Number(val).toLocaleString('pt-BR')
+            },
+            grid: { color: '#f1f5f9' }
+          },
+          x: {
+            grid: { display: false }
+          }
+        }
+      }
+    });
+  }
+
+  /**
+   * Renderiza o Gráfico Donut por Categorias
+   */
+  function renderizarGraficoCategorias(categoryTotals) {
+    const ctx = document.getElementById('chartCategorias').getContext('2d');
+    const labels = Object.keys(categoryTotals);
+    const values = Object.values(categoryTotals);
+
+    if (appState.charts.categorias) {
+      appState.charts.categorias.destroy();
+    }
+
+    if (labels.length === 0 || values.every(v => v === 0)) {
+      labels.push('Sem registros');
+      values.push(1);
+    }
+
+    const colors = [
+      '#2563eb', '#10b981', '#f59e0b', '#06b6d4', 
+      '#8b5cf6', '#ec4899', '#64748b', '#f97316'
+    ];
+
+    appState.charts.categorias = new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: labels,
+        datasets: [{
+          data: values,
+          backgroundColor: colors,
+          borderWidth: 2,
+          borderColor: '#ffffff'
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: { boxWidth: 12, font: { size: 11 } }
+          },
+          tooltip: {
+            callbacks: {
+              label: (item) => ' ' + item.label + ': ' + formatMoney(item.raw)
+            }
+          }
+        },
+        cutout: '65%'
+      }
+    });
+  }
+
+  /**
+   * Renderiza Tabela de Maiores Fornecedores
+   */
+  function renderizarTopFornecedores(suppliers, totalAno) {
+    const tbody = document.getElementById('tbodyTopSuppliers');
+    tbody.innerHTML = '';
+
+    if (!suppliers || suppliers.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted py-3">Nenhum fornecedor registrado neste ano.</td></tr>';
+      return;
+    }
+
+    suppliers.forEach(s => {
+      const pct = totalAno > 0 ? ((s.total / totalAno) * 100).toFixed(1) : 0;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>
+          <div class="fw-semibold text-dark"><i class="fa-solid fa-store text-muted me-1"></i> ${escapeHtml(s.name)}</div>
+        </td>
+        <td class="text-end fw-bold text-dark">${formatMoney(s.total)}</td>
+        <td class="text-end">
+          <span class="badge bg-light text-dark border">${pct}%</span>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+
+  /**
+   * Renderiza Alertas de Garantia
+   */
+  function renderizarAlertasGarantia(warranties) {
+    const list = document.getElementById('listGarantias');
+    list.innerHTML = '';
+
+    if (!warranties || warranties.length === 0) {
+      list.innerHTML = `
+        <div class="p-4 text-center text-muted">
+          <i class="fa-regular fa-circle-check text-success fs-3 mb-2"></i>
+          <p class="mb-0 small">Nenhuma garantia ou licença com vencimento nos próximos 60 dias.</p>
+        </div>
+      `;
+      return;
+    }
+
+    warranties.forEach(w => {
+      const item = document.createElement('div');
+      item.className = 'list-group-item list-group-item-action d-flex justify-content-between align-items-center p-3 border-0 border-bottom';
+      item.innerHTML = `
+        <div>
+          <div class="fw-semibold text-dark">${escapeHtml(w.fornecedor)}</div>
+          <small class="text-muted">${escapeHtml(w.descricao)}</small>
+          <div class="small text-danger fw-semibold mt-1">
+            <i class="fa-regular fa-clock me-1"></i>Vence em: ${formatDateBr(w.dataVencimento)} (${w.diasRestantes} dias)
+          </div>
+        </div>
+        <span class="badge bg-warning text-dark">${w.diasRestantes}d</span>
+      `;
+      list.appendChild(item);
+    });
+  }
+
+  /**
+   * Renderiza Relatórios Consolidados
+   */
+  function renderizarRelatorios(data) {
+    // 1. Mensal
+    const tbodyMes = document.getElementById('tbodyRelatorioMensal');
+    tbodyMes.innerHTML = '';
+    const nomesMeses = [
+      'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+      'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
+    ];
+
+    let somaProd = 0;
+    let somaServ = 0;
+
+    nomesMeses.forEach((nome, idx) => {
+      const mesNum = (idx + 1).toString().padStart(2, '0');
+      // Filtra compras deste mês e ano
+      const comprasMes = appState.allPurchases.filter(p => {
+        if (!p.dataCompra) return false;
+        const [ano, mes] = p.dataCompra.split('-');
+        return parseInt(ano) === data.selectedYear && mes === mesNum;
+      });
+
+      const totalMes = comprasMes.reduce((acc, c) => acc + (Number(c.valor) || 0), 0);
+      const prodMes = comprasMes.filter(c => c.tipo === 'Produto').reduce((acc, c) => acc + (Number(c.valor) || 0), 0);
+      const servMes = totalMes - prodMes;
+
+      somaProd += prodMes;
+      somaServ += servMes;
+
+      const pct = data.totalAno > 0 ? ((totalMes / data.totalAno) * 100).toFixed(1) : '0.0';
+
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="fw-semibold"><i class="fa-regular fa-calendar-days text-primary me-2"></i> ${nome}</td>
+        <td class="text-end">${formatMoney(prodMes)}</td>
+        <td class="text-end">${formatMoney(servMes)}</td>
+        <td class="text-end fw-bold ${totalMes > 0 ? 'text-primary' : 'text-muted'}">${formatMoney(totalMes)}</td>
+        <td class="text-end">${pct}%</td>
+      `;
+      tbodyMes.appendChild(tr);
+    });
+
+    document.getElementById('relTotProdutos').innerText = formatMoney(somaProd);
+    document.getElementById('relTotServicos').innerText = formatMoney(somaServ);
+    document.getElementById('relTotAno').innerText = formatMoney(data.totalAno);
+
+    // 2. Categorias
+    const tbodyCat = document.getElementById('tbodyRelatorioCategorias');
+    tbodyCat.innerHTML = '';
+    Object.keys(data.categoryTotals).forEach(cat => {
+      const val = data.categoryTotals[cat];
+      const pct = data.totalAno > 0 ? ((val / data.totalAno) * 100).toFixed(1) : 0;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="fw-semibold">${escapeHtml(cat)}</td>
+        <td class="text-end fw-bold">${formatMoney(val)}</td>
+        <td class="text-end"><span class="badge bg-light text-dark border">${pct}%</span></td>
+      `;
+      tbodyCat.appendChild(tr);
+    });
+
+    // 3. Centros de Custo
+    const tbodyCC = document.getElementById('tbodyRelatorioCentros');
+    tbodyCC.innerHTML = '';
+    Object.keys(data.costCenterTotals).forEach(cc => {
+      const val = data.costCenterTotals[cc];
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="fw-semibold">${escapeHtml(cc)}</td>
+        <td class="text-end fw-bold text-dark">${formatMoney(val)}</td>
+      `;
+      tbodyCC.appendChild(tr);
+    });
+  }
+
+  /**
+   * Atualiza a Tabela de Compras com Filtros
+   */
+  function atualizarTabelaCompras() {
+    filtrarTabelaCompras();
+  }
+
+  function filtrarTabelaCompras() {
+    const texto = (document.getElementById('filtroTexto').value || '').toLowerCase();
+    const tipo = document.getElementById('filtroTipo').value;
+    const cat = document.getElementById('filtroCategoria').value;
+    const mes = document.getElementById('filtroMes').value;
+    const ano = appState.selectedYear;
+
+    appState.filteredPurchases = appState.allPurchases.filter(p => {
+      // Filtro Ano
+      if (p.dataCompra) {
+        const [pAno, pMes] = p.dataCompra.split('-');
+        if (parseInt(pAno) !== ano) return false;
+        if (mes && pMes !== mes) return false;
+      }
+
+      // Filtro Tipo
+      if (tipo && p.tipo !== tipo) return false;
+
+      // Filtro Categoria
+      if (cat && p.categoria !== cat) return false;
+
+      // Filtro Texto (Fornecedor, CNPJ, Descrição, ID, Centro de Custo)
+      if (texto) {
+        const searchPool = `${p.fornecedor} ${p.cnpj} ${p.descricao} ${p.id} ${p.centroCusto} ${p.formaPagamento}`.toLowerCase();
+        if (!searchPool.includes(texto)) return false;
+      }
+
+      return true;
+    });
+
+    renderizarLinhasCompras(appState.filteredPurchases);
+  }
+
+  function renderizarLinhasCompras(purchases) {
+    const tbody = document.getElementById('tbodyCompras');
+    const emptyState = document.getElementById('emptyStateCompras');
+    tbody.innerHTML = '';
+
+    let totalFiltrado = 0;
+
+    if (!purchases || purchases.length === 0) {
+      emptyState.classList.remove('d-none');
+      document.getElementById('totalItensBadge').innerText = 'Exibindo 0 registros';
+      document.getElementById('totalFiltradoValor').innerText = formatMoney(0);
+      return;
+    }
+
+    emptyState.classList.add('d-none');
+
+    purchases.forEach(p => {
+      totalFiltrado += Number(p.valor) || 0;
+
+      // Badges
+      let tipoBadgeClass = 'badge-tipo-produto';
+      if (p.tipo === 'Serviço') tipoBadgeClass = 'badge-tipo-servico';
+      else if (p.tipo && p.tipo.includes('SaaS')) tipoBadgeClass = 'badge-tipo-saas';
+
+      let statusBadgeClass = 'badge-pago';
+      if (p.statusPagamento === 'Pendente') statusBadgeClass = 'badge-pendente';
+      else if (p.statusPagamento === 'Parcelado') statusBadgeClass = 'badge-parcelado';
+      else if (p.statusPagamento === 'Cancelado') statusBadgeClass = 'badge-cancelado';
+
+      // Link NF
+      let nfLinkHtml = '<span class="text-muted small">-</span>';
+      if (p.linkNf && p.linkNf.trim() !== '') {
+        nfLinkHtml = `
+          <a href="${escapeHtml(p.linkNf)}" target="_blank" class="btn btn-outline-danger btn-sm py-0 px-2" title="Visualizar Nota Fiscal no Drive">
+            <i class="fa-solid fa-file-pdf"></i> NF
+          </a>
+        `;
+      }
+
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="text-nowrap fw-semibold">${formatDateBr(p.dataCompra)}</td>
+        <td><span class="badge-tipo ${tipoBadgeClass}">${escapeHtml(p.tipo || 'Produto')}</span></td>
+        <td>
+          <div class="fw-bold text-dark">${escapeHtml(p.fornecedor)}</div>
+          <small class="text-muted"><i class="fa-solid fa-id-card me-1"></i>${escapeHtml(p.cnpj || 'S/ CNPJ')}</small>
+        </td>
+        <td>
+          <div class="text-dark">${escapeHtml(p.descricao)}</div>
+          ${p.garantia ? `<small class="text-muted"><i class="fa-solid fa-shield-halved text-warning me-1"></i>Garantia até: ${formatDateBr(p.garantia)}</small>` : ''}
+        </td>
+        <td>
+          <div class="fw-semibold text-secondary small">${escapeHtml(p.categoria || '-')}</div>
+          <small class="text-muted">${escapeHtml(p.centroCusto || '')}</small>
+        </td>
+        <td class="text-end fw-bold text-dark fs-6">${formatMoney(p.valor)}</td>
+        <td>
+          <div><span class="badge-status ${statusBadgeClass}">${escapeHtml(p.statusPagamento || 'Pago')}</span></div>
+          <small class="text-muted d-block mt-1">${escapeHtml(p.formaPagamento || '')}</small>
+        </td>
+        <td class="text-center">${nfLinkHtml}</td>
+        <td class="text-center text-nowrap no-print">
+          <button class="btn btn-outline-primary btn-sm me-1" onclick="editarCompra('${p.id}')" title="Editar Compra">
+            <i class="fa-solid fa-pen-to-square"></i>
+          </button>
+          <button class="btn btn-outline-danger btn-sm" onclick="confirmarExclusaoCompra('${p.id}', '${escapeHtml(p.fornecedor)} - ${formatMoney(p.valor)}')" title="Excluir Compra">
+            <i class="fa-solid fa-trash-can"></i>
+          </button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    document.getElementById('totalItensBadge').innerText = `Exibindo ${purchases.length} registro(s)`;
+    document.getElementById('totalFiltradoValor').innerText = formatMoney(totalFiltrado);
+  }
+
+  /**
+   * Modal Cadastro / Edição
+   */
+  function abrirModalCadastro() {
+    document.getElementById('formCompra').reset();
+    document.getElementById('compraId').value = '';
+    document.getElementById('compraLinkNf').value = '';
+    document.getElementById('compraData').value = new Date().toISOString().split('T')[0];
+    document.getElementById('previewNf').classList.add('d-none');
+    document.getElementById('modalCompraLabel').innerHTML = '<i class="fa-solid fa-cart-shopping me-2 text-primary"></i> Nova Compra / Despesa de T.I';
+    appState.uploadedFilePayload = null;
+
+    modalCompraInstance.show();
+  }
+
+  function editarCompra(id) {
+    const compra = appState.allPurchases.find(p => p.id === id);
+    if (!compra) return;
+
+    document.getElementById('formCompra').reset();
+    document.getElementById('compraId').value = compra.id;
+    document.getElementById('compraCnpj').value = compra.cnpj || '';
+    document.getElementById('compraFornecedor').value = compra.fornecedor || '';
+    document.getElementById('compraTipo').value = compra.tipo || 'Produto';
+    document.getElementById('compraCategoria').value = compra.categoria || '';
+    document.getElementById('compraCentroCusto').value = compra.centroCusto || '';
+    document.getElementById('compraDescricao').value = compra.descricao || '';
+    document.getElementById('compraValor').value = compra.valor || '';
+    document.getElementById('compraData').value = compra.dataCompra || '';
+    document.getElementById('compraFormaPgto').value = compra.formaPagamento || '';
+    document.getElementById('compraStatusPgto').value = compra.statusPagamento || 'Pago';
+    document.getElementById('compraParcelas').value = compra.parcelas || '';
+    document.getElementById('compraGarantia').value = compra.garantia || '';
+    document.getElementById('compraObs').value = compra.observacoes || '';
+    document.getElementById('compraLinkNf').value = compra.linkNf || '';
+
+    // Preview de Anexo se existir
+    const preview = document.getElementById('previewNf');
+    const link = document.getElementById('linkVisualizarNf');
+    if (compra.linkNf && compra.linkNf.trim() !== '') {
+      link.href = compra.linkNf;
+      link.innerText = 'Visualizar Nota Fiscal Existente';
+      preview.classList.remove('d-none');
+    } else {
+      preview.classList.add('d-none');
+    }
+
+    document.getElementById('modalCompraLabel').innerHTML = '<i class="fa-solid fa-pen-to-square me-2 text-warning"></i> Editar Compra / Despesa de T.I';
+    appState.uploadedFilePayload = null;
+
+    modalCompraInstance.show();
+  }
+
+  /**
+   * Consulta Automática de CNPJ (BrasilAPI)
+   */
+  function buscarDadosCNPJ() {
+    const cnpj = document.getElementById('compraCnpj').value.replace(/\D/g, '');
+    if (cnpj.length !== 14) {
+      alert('Por favor, informe um CNPJ válido com 14 dígitos.');
+      return;
+    }
+
+    setLoading(true, 'Buscando dados da empresa na Receita Federal...');
+
+    google.script.run
+      .withSuccessHandler((res) => {
+        setLoading(false);
+        if (res.success) {
+          const nomeEmpresa = res.nomeFantasia || res.razaoSocial;
+          document.getElementById('compraFornecedor').value = nomeEmpresa;
+        } else {
+          alert(res.message || 'CNPJ não localizado.');
+        }
+      })
+      .withFailureHandler((err) => {
+        setLoading(false);
+        alert('Erro ao consultar CNPJ: ' + err.toString());
+      })
+      .consultarCNPJ(cnpj);
+  }
+
+  /**
+   * Drag and drop e upload de arquivo de NF
+   */
+  function setupDropZone() {
+    const dropZone = document.getElementById('dropZoneNf');
+    if (!dropZone) return;
+
+    ['dragenter', 'dragover'].forEach(eventName => {
+      dropZone.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        dropZone.classList.add('dragover');
+      }, false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+      dropZone.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+      }, false);
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+      const dt = e.dataTransfer;
+      const files = dt.files;
+      if (files.length > 0) {
+        processarArquivo(files[0]);
+      }
+    });
+  }
+
+  function processarArquivoNf(input) {
+    if (input.files && input.files[0]) {
+      processarArquivo(input.files[0]);
+    }
+  }
+
+  function processarArquivo(file) {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      appState.uploadedFilePayload = {
+        name: file.name,
+        mimeType: file.type,
+        base64: e.target.result
+      };
+
+      const preview = document.getElementById('previewNf');
+      const link = document.getElementById('linkVisualizarNf');
+      link.href = '#';
+      link.innerText = `Arquivo Selecionado: ${file.name} (será enviado ao salvar)`;
+      preview.classList.remove('d-none');
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function removerAnexoNf() {
+    appState.uploadedFilePayload = null;
+    document.getElementById('compraLinkNf').value = '';
+    document.getElementById('inputArquivoNf').value = '';
+    document.getElementById('previewNf').classList.add('d-none');
+  }
+
+  /**
+   * Salvar Formulário de Compra
+   */
+  function salvarCompraForm(event) {
+    event.preventDefault();
+
+    const compraData = {
+      id: document.getElementById('compraId').value,
+      cnpj: document.getElementById('compraCnpj').value,
+      fornecedor: document.getElementById('compraFornecedor').value,
+      tipo: document.getElementById('compraTipo').value,
+      categoria: document.getElementById('compraCategoria').value,
+      centroCusto: document.getElementById('compraCentroCusto').value,
+      descricao: document.getElementById('compraDescricao').value,
+      valor: parseFloat(document.getElementById('compraValor').value) || 0,
+      dataCompra: document.getElementById('compraData').value,
+      formaPagamento: document.getElementById('compraFormaPgto').value,
+      statusPagamento: document.getElementById('compraStatusPgto').value,
+      parcelas: document.getElementById('compraParcelas').value,
+      garantia: document.getElementById('compraGarantia').value,
+      linkNf: document.getElementById('compraLinkNf').value,
+      observacoes: document.getElementById('compraObs').value
+    };
+
+    // Se houver arquivo selecionado para upload
+    if (appState.uploadedFilePayload) {
+      setLoading(true, 'Enviando Nota Fiscal para o Google Drive...');
+      google.script.run
+        .withSuccessHandler((uploadRes) => {
+          if (uploadRes.success) {
+            compraData.linkNf = uploadRes.fileUrl;
+            efetivarSalvarCompra(compraData);
+          } else {
+            setLoading(false);
+            alert('Falha ao enviar arquivo: ' + uploadRes.message);
+          }
+        })
+        .withFailureHandler(handleError)
+        .uploadNfFile(appState.uploadedFilePayload);
+    } else {
+      setLoading(true, 'Gravando registro no Google Sheets...');
+      efetivarSalvarCompra(compraData);
+    }
+  }
+
+  function efetivarSalvarCompra(compraData) {
+    google.script.run
+      .withSuccessHandler((res) => {
+        setLoading(false);
+        if (res.success) {
+          modalCompraInstance.hide();
+          carregarDadosGerais();
+        } else {
+          alert('Erro ao salvar compra: ' + res.message);
+        }
+      })
+      .withFailureHandler(handleError)
+      .savePurchase(compraData);
+  }
+
+  /**
+   * Exclusão de Compra
+   */
+  function confirmarExclusaoCompra(id, label) {
+    if (confirm(`Deseja realmente excluir este registro?\n\n${label}`)) {
+      setLoading(true, 'Excluindo registro...');
+      google.script.run
+        .withSuccessHandler((res) => {
+          setLoading(false);
+          if (res.success) {
+            carregarDadosGerais();
+          } else {
+            alert('Erro ao excluir: ' + res.message);
+          }
+        })
+        .withFailureHandler(handleError)
+        .deletePurchase(id);
+    }
+  }
+
+  /**
+   * Exportar para Excel / CSV
+   */
+  function exportarExcel() {
+    if (!appState.filteredPurchases || appState.filteredPurchases.length === 0) {
+      alert('Não há dados filtrados para exportar.');
+      return;
+    }
+
+    const headers = ['ID', 'Data', 'Tipo', 'Fornecedor', 'CNPJ', 'Descricao', 'Categoria', 'Centro de Custo', 'Valor (R$)', 'Forma Pgto', 'Status', 'Garantia', 'Link NF'];
+    
+    let csvContent = '\uFEFF'; // UTF-8 BOM para abrir corretamente com acentos no Excel
+    csvContent += headers.join(';') + '\r\n';
+
+    appState.filteredPurchases.forEach(p => {
+      const row = [
+        p.id,
+        p.dataCompra,
+        `"${(p.tipo || '').replace(/"/g, '""')}"`,
+        `"${(p.fornecedor || '').replace(/"/g, '""')}"`,
+        `"${(p.cnpj || '').replace(/"/g, '""')}"`,
+        `"${(p.descricao || '').replace(/"/g, '""')}"`,
+        `"${(p.categoria || '').replace(/"/g, '""')}"`,
+        `"${(p.centroCusto || '').replace(/"/g, '""')}"`,
+        Number(p.valor || 0).toFixed(2).replace('.', ','),
+        `"${(p.formaPagamento || '').replace(/"/g, '""')}"`,
+        `"${(p.statusPagamento || '').replace(/"/g, '""')}"`,
+        p.garantia || '',
+        p.linkNf || ''
+      ];
+      csvContent += row.join(';') + '\r\n';
+    });
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `Compras_TI_Agape_${appState.selectedYear}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
+  /**
+   * Imprimir Relatório / Salvar em PDF
+   */
+  function imprimirRelatorio() {
+    window.print();
+  }
+
+  /**
+   * Tratamento de Erros
+   */
+  function handleError(err) {
+    setLoading(false);
+    console.error(err);
+    alert('Ocorreu um erro na comunicação com o Google Apps Script:\n' + (err.message || err.toString()));
+  }
+
+  /**
+   * Escapar HTML para evitar XSS
+   */
+  function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+</script>
