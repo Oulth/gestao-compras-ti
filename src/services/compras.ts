@@ -104,10 +104,32 @@ export async function updateCompra(
 }
 
 /**
- * Salva uma compra (se possuir id realiza update, caso contrário create).
+ * Cria múltiplas compras em lote no banco de dados (para parcelamentos e recorrências automáticas).
  */
-export async function saveCompra(compra: Partial<Compra>): Promise<Compra> {
-  if (compra.id) {
+export async function createComprasLote(compras: CompraInput[]): Promise<Compra[]> {
+  const { data, error } = await supabase
+    .from('compras')
+    .insert(compras)
+    .select();
+
+  if (error) {
+    console.error('[comprasService] Erro ao criar lote de compras:', error);
+    throw new Error(`Falha ao cadastrar compras em lote: ${error.message}`);
+  }
+
+  return (data as Compra[]) || [];
+}
+
+/**
+ * Salva uma compra ou lote de compras (se possuir id realiza update, se array realiza lote, caso contrário create).
+ */
+export async function saveCompra(
+  compra: Partial<Compra> | CompraInput | CompraInput[]
+): Promise<Compra | Compra[]> {
+  if (Array.isArray(compra)) {
+    return createComprasLote(compra);
+  }
+  if ('id' in compra && compra.id) {
     return updateCompra(compra.id, compra);
   }
   return createCompra(compra as CompraInput);

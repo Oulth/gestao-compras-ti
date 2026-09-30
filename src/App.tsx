@@ -178,7 +178,7 @@ export default function App() {
     setCompraEmEdicao(null);
   };
 
-  const handleSalvarCompra = async (dados: CompraInput | Compra) => {
+  const handleSalvarCompra = async (dados: CompraInput | Compra | CompraInput[]) => {
     await saveCompra(dados);
     await carregarDados(false);
   };

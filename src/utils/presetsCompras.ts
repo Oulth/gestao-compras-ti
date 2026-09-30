@@ -5,6 +5,8 @@ export interface ModeloCompraRapida {
   nome: string;
   icone: string;
   badge: string;
+  modalidadeSugerida?: 'a_vista' | 'parcelado' | 'recorrente_mensal';
+  duracaoMesesSugerida?: number;
   dados: {
     tipo: TipoDespesa;
     fornecedor: string;
@@ -23,7 +25,9 @@ export const MODELOS_COMPRAS_RAPIDAS: ModeloCompraRapida[] = [
     id: 'internet-fibra',
     nome: 'Internet / Link Dedicado',
     icone: '🌐',
-    badge: 'Telecom',
+    badge: 'Telecom • Recorrente',
+    modalidadeSugerida: 'recorrente_mensal',
+    duracaoMesesSugerida: 12,
     dados: {
       tipo: 'Contrato Mensal',
       fornecedor: 'Provedor Telecom / Link Fibra',
@@ -39,14 +43,16 @@ export const MODELOS_COMPRAS_RAPIDAS: ModeloCompraRapida[] = [
     id: 'microsoft-365',
     nome: 'Microsoft 365 / Google Workspace',
     icone: '☁️',
-    badge: 'Licenças',
+    badge: 'Licenças • Recorrente',
+    modalidadeSugerida: 'recorrente_mensal',
+    duracaoMesesSugerida: 12,
     dados: {
       tipo: 'Assinatura Recorrente (SaaS)',
       fornecedor: 'Microsoft do Brasil / Google Cloud',
       cnpj: '',
-      categoria: 'Software & Licenças',
-      centro_custo: 'T.I - Sistemas & Gestão',
-      forma_pagamento: 'Cartão Corporativo',
+      categoria: 'Software & Licenças (SaaS, SO, Antivírus)',
+      centro_custo: 'T.I - Sistemas & Licenças',
+      forma_pagamento: 'Cartão de Crédito Corporativo',
       status_pagamento: 'Pago',
       descricao: 'Assinatura Mensal de Licenças Cloud para E-mails Institucionais e Ferramentas Docentes',
     },
@@ -56,11 +62,12 @@ export const MODELOS_COMPRAS_RAPIDAS: ModeloCompraRapida[] = [
     nome: 'Toners & Insumos de Impressão',
     icone: '🖨️',
     badge: 'Insumos',
+    modalidadeSugerida: 'a_vista',
     dados: {
       tipo: 'Produto',
       fornecedor: 'Kalunga / Distribuidor de Suprimentos',
       cnpj: '',
-      categoria: 'Insumos (Toners, Tintas, Bobinas)',
+      categoria: 'Impressoras & Suprimentos (Toners, Peças)',
       centro_custo: 'T.I - Infraestrutura',
       forma_pagamento: 'Boleto Bancário',
       status_pagamento: 'Pago',
@@ -72,11 +79,12 @@ export const MODELOS_COMPRAS_RAPIDAS: ModeloCompraRapida[] = [
     nome: 'Cabos & Conectores de Rede',
     icone: '🔌',
     badge: 'Redes',
+    modalidadeSugerida: 'a_vista',
     dados: {
       tipo: 'Produto',
       fornecedor: 'Distribuidora de Redes & Conectividade',
       cnpj: '',
-      categoria: 'Infraestrutura de Rede',
+      categoria: 'Redes & Conectividade (Switches, Roteadores, Cabos)',
       centro_custo: 'T.I - Infraestrutura',
       forma_pagamento: 'PIX',
       status_pagamento: 'Pago',
@@ -87,15 +95,17 @@ export const MODELOS_COMPRAS_RAPIDAS: ModeloCompraRapida[] = [
     id: 'ssd-ram-upgrade',
     nome: 'SSDs & RAM (Upgrades)',
     icone: '💻',
-    badge: 'Hardware',
+    badge: 'Hardware • Parcelado',
+    modalidadeSugerida: 'parcelado',
+    duracaoMesesSugerida: 6,
     dados: {
       tipo: 'Produto',
       fornecedor: 'Kabum / Distribuidora de Informática',
       cnpj: '',
       categoria: 'Hardware (PCs, Notebooks, Servidores)',
       centro_custo: 'T.I - Infraestrutura',
-      forma_pagamento: 'Cartão Corporativo',
-      status_pagamento: 'Pago',
+      forma_pagamento: 'Cartão de Crédito Corporativo',
+      status_pagamento: 'Parcelado',
       descricao: 'SSDs NVMe de Alta Performance e Memórias RAM para Upgrade de Desktops Pedagógicos',
     },
   },
@@ -104,11 +114,12 @@ export const MODELOS_COMPRAS_RAPIDAS: ModeloCompraRapida[] = [
     nome: 'Manutenção Preventiva CPD',
     icone: '❄️',
     badge: 'Manutenção',
+    modalidadeSugerida: 'a_vista',
     dados: {
       tipo: 'Serviço',
       fornecedor: 'Empresa Especializada de Climatização',
       cnpj: '',
-      categoria: 'Manutenção & Suporte Especializado',
+      categoria: 'Suporte & Serviços Especializados',
       centro_custo: 'T.I - Infraestrutura',
       forma_pagamento: 'PIX',
       status_pagamento: 'Pago',
@@ -120,11 +131,12 @@ export const MODELOS_COMPRAS_RAPIDAS: ModeloCompraRapida[] = [
     nome: 'Bobinas Térmicas de Catracas',
     icone: '🎟️',
     badge: 'Acesso',
+    modalidadeSugerida: 'a_vista',
     dados: {
       tipo: 'Produto',
       fornecedor: 'Distribuidora de Suprimentos de Acesso',
       cnpj: '',
-      categoria: 'Insumos (Toners, Tintas, Bobinas)',
+      categoria: 'Impressoras & Suprimentos (Toners, Peças)',
       centro_custo: 'T.I - Infraestrutura',
       forma_pagamento: 'Boleto Bancário',
       status_pagamento: 'Pago',

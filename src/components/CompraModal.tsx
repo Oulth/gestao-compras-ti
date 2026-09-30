@@ -14,6 +14,11 @@ import {
   Layers,
   FileCode,
   Zap,
+  Repeat,
+  CreditCard,
+  Banknote,
+  CalendarDays,
+  Info,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
@@ -26,7 +31,7 @@ import type {
 import { consultarCnpj } from '../services/brasilApi';
 import { uploadComprovanteNf, deleteComprovanteNf } from '../services/storage';
 import { DEFAULT_CONFIGURACOES, getConfiguracoes } from '../services/compras';
-import { formatCurrency, formatCnpj } from '../utils/formatters';
+import { formatCurrency, formatCnpj, formatDate } from '../utils/formatters';
 import { parseNfeXml } from '../utils/nfeParser';
 import { MODELOS_COMPRAS_RAPIDAS, type ModeloCompraRapida } from '../utils/presetsCompras';
 
@@ -34,7 +39,7 @@ export interface CompraModalProps {
   isOpen: boolean;
   onClose: () => void;
   compraEmEdicao?: Compra | null;
-  onSalvar: (compra: CompraInput | Compra) => Promise<void>;
+  onSalvar: (compra: CompraInput | Compra | CompraInput[]) => Promise<void>;
   categorias?: string[];
   centrosCusto?: string[];
   formasPagamento?: string[];
@@ -55,6 +60,40 @@ const STATUS_PAGAMENTO: StatusPagamento[] = [
   'Cancelado',
 ];
 
+type ModalidadePagamento = 'a_vista' | 'parcelado' | 'recorrente_mensal';
+type DuracaoRecorrencia = 'fim_do_ano' | '12_meses' | '6_meses' | 'personalizado';
+
+/**
+ * Adiciona meses a uma data YYYY-MM-DD com segurança contra estouro de dias
+ */
+function addMonths(dateStr: string, months: number): string {
+  if (!dateStr) return '';
+  const [yearStr, monthStr, dayStr] = dateStr.split('-');
+  const year = parseInt(yearStr, 10);
+  const month = parseInt(monthStr, 10) - 1;
+  const day = parseInt(dayStr, 10);
+
+  const date = new Date(year, month + months, day);
+  if (date.getDate() !== day) {
+    date.setDate(0); // Último dia do mês correto
+  }
+
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * Calcula quantidade de meses restantes até dezembro a partir de uma data
+ */
+function calcularMesesRestantesAno(dataStr: string): number {
+  if (!dataStr) return 12;
+  const mes = parseInt(dataStr.split('-')[1], 10);
+  if (isNaN(mes)) return 12;
+  return Math.max(1, 12 - mes + 1);
+}
+
 export const CompraModal: React.FC<CompraModalProps> = ({
   isOpen,
   onClose,
@@ -72,7 +111,7 @@ export const CompraModal: React.FC<CompraModalProps> = ({
     formasPagamento: formasPagamentoProp || DEFAULT_CONFIGURACOES.formasPagamento,
   });
 
-  // Estados dos campos do formulário
+  // Estados dos campos básicos do formulário
   const [codigoTi, setCodigoTi] = useState<string>('');
   const [dataCompra, setDataCompra] = useState<string>('');
   const [tipo, setTipo] = useState<TipoDespesa>('Produto');
@@ -84,11 +123,18 @@ export const CompraModal: React.FC<CompraModalProps> = ({
   const [valor, setValor] = useState<string>('');
   const [formaPagamento, setFormaPagamento] = useState<string>('');
   const [statusPagamento, setStatusPagamento] = useState<StatusPagamento>('Pago');
-  const [parcelas, setParcelas] = useState<string>('');
   const [garantia, setGarantia] = useState<string>('');
   const [linkNf, setLinkNf] = useState<string>('');
   const [nomeArquivoNf, setNomeArquivoNf] = useState<string>('');
   const [observacoes, setObservacoes] = useState<string>('');
+
+  // Estados da Duração das Parcelas e Recorrência Mensal
+  const [modalidadePagamento, setModalidadePagamento] = useState<ModalidadePagamento>('a_vista');
+  const [numParcelas, setNumParcelas] = useState<number>(3);
+  const [desmembrarParcelas, setDesmembrarParcelas] = useState<boolean>(true);
+  const [duracaoRecorrencia, setDuracaoRecorrencia] = useState<DuracaoRecorrencia>('12_meses');
+  const [mesesPersonalizados, setMesesPersonalizados] = useState<number>(12);
+  const [gerarMensalidadesFuturas, setGerarMensalidadesFuturas] = useState<boolean>(true);
 
   // Estados de controle e feedback
   const [isSearchingCnpj, setIsSearchingCnpj] = useState<boolean>(false);
@@ -172,11 +218,20 @@ export const CompraModal: React.FC<CompraModalProps> = ({
       setValor(compraEmEdicao.valor ? String(compraEmEdicao.valor) : '');
       setFormaPagamento(compraEmEdicao.forma_pagamento || '');
       setStatusPagamento(compraEmEdicao.status_pagamento || 'Pago');
-      setParcelas(compraEmEdicao.parcelas || '');
       setGarantia(compraEmEdicao.garantia ? compraEmEdicao.garantia.slice(0, 10) : '');
       setLinkNf(compraEmEdicao.link_nf || '');
       setNomeArquivoNf(compraEmEdicao.nome_arquivo_nf || '');
       setObservacoes(compraEmEdicao.observacoes || '');
+
+      // Identifica modalidade existente
+      const parc = (compraEmEdicao.parcelas || '').toLowerCase();
+      if (parc.includes('recorrente') || compraEmEdicao.tipo === 'Assinatura Recorrente (SaaS)' || compraEmEdicao.tipo === 'Contrato Mensal') {
+        setModalidadePagamento('recorrente_mensal');
+      } else if (compraEmEdicao.status_pagamento === 'Parcelado' || parc.match(/\d+x/)) {
+        setModalidadePagamento('parcelado');
+      } else {
+        setModalidadePagamento('a_vista');
+      }
     } else {
       // Modo Criação: valores padrão
       const hoje = new Date().toISOString().split('T')[0];
@@ -191,11 +246,18 @@ export const CompraModal: React.FC<CompraModalProps> = ({
       setValor('');
       setFormaPagamento(config.formasPagamento[0] || 'PIX');
       setStatusPagamento('Pago');
-      setParcelas('');
       setGarantia('');
       setLinkNf('');
       setNomeArquivoNf('');
       setObservacoes('');
+
+      // Padrões de duração e recorrência
+      setModalidadePagamento('a_vista');
+      setNumParcelas(3);
+      setDesmembrarParcelas(true);
+      setDuracaoRecorrencia('12_meses');
+      setMesesPersonalizados(12);
+      setGerarMensalidadesFuturas(true);
     }
     setErrors({});
   }, [isOpen, compraEmEdicao]);
@@ -215,7 +277,6 @@ export const CompraModal: React.FC<CompraModalProps> = ({
     }
     setCnpj(masked);
 
-    // Se completou 14 dígitos e o fornecedor ainda está vazio, faz busca automática suave
     if (raw.length === 14 && !fornecedor) {
       realizarBuscaCnpj(masked);
     }
@@ -226,7 +287,6 @@ export const CompraModal: React.FC<CompraModalProps> = ({
     setFornecedor(novoNome);
     if (errors.fornecedor) setErrors((prev) => ({ ...prev, fornecedor: '' }));
 
-    // Procura se já temos esse fornecedor no histórico
     const encontrado = fornecedoresHistorico.find(
       (f) => f.nome.toLowerCase() === novoNome.trim().toLowerCase()
     );
@@ -243,7 +303,7 @@ export const CompraModal: React.FC<CompraModalProps> = ({
       if (encontrado.formaPagamento && (!formaPagamento || formaPagamento === config.formasPagamento[0])) {
         setFormaPagamento(encontrado.formaPagamento);
       }
-      toast.info(`Dados de ${encontrado.nome} recuperados do histórico!`);
+      toast.info(`Dados de ${encontrado.nome} preenchidos do histórico!`);
     }
   };
 
@@ -260,6 +320,18 @@ export const CompraModal: React.FC<CompraModalProps> = ({
     if (modelo.dados.valorSugerido) {
       setValor(modelo.dados.valorSugerido);
     }
+
+    if (modelo.modalidadeSugerida) {
+      setModalidadePagamento(modelo.modalidadeSugerida);
+      if (modelo.modalidadeSugerida === 'parcelado') {
+        setNumParcelas(modelo.duracaoMesesSugerida || 6);
+        setStatusPagamento('Parcelado');
+      } else if (modelo.modalidadeSugerida === 'recorrente_mensal') {
+        setDuracaoRecorrencia('12_meses');
+        setStatusPagamento('Pago');
+      }
+    }
+
     setErrors({});
     toast.success(`⚡ Modelo "${modelo.nome}" aplicado com sucesso!`);
   };
@@ -279,27 +351,25 @@ export const CompraModal: React.FC<CompraModalProps> = ({
       if (dadosNfe.descricao) setDescricao(dadosNfe.descricao);
       if (dadosNfe.formaPagamento) setFormaPagamento(dadosNfe.formaPagamento);
       setTipo('Produto');
+      setModalidadePagamento('a_vista');
 
-      // Tenta associar categoria mais provável por inteligência de palavras-chave
       const descLower = (dadosNfe.descricao + ' ' + dadosNfe.fornecedor).toLowerCase();
       if (descLower.includes('toner') || descLower.includes('tinta') || descLower.includes('bobina') || descLower.includes('cartucho')) {
-        setCategoria('Insumos (Toners, Tintas, Bobinas)');
-      } else if (descLower.includes('cabo') || descLower.includes('patch') || descLower.includes('rj45') || descLower.includes('switch') || descLower.includes('roteador') || descLower.includes('access point')) {
-        setCategoria('Infraestrutura de Rede');
-      } else if (descLower.includes('ssd') || descLower.includes('memoria') || descLower.includes('notebook') || descLower.includes('computador') || descLower.includes('dell') || descLower.includes('desktop')) {
+        setCategoria('Impressoras & Suprimentos (Toners, Peças)');
+      } else if (descLower.includes('cabo') || descLower.includes('patch') || descLower.includes('rj45') || descLower.includes('switch') || descLower.includes('roteador')) {
+        setCategoria('Redes & Conectividade (Switches, Roteadores, Cabos)');
+      } else if (descLower.includes('ssd') || descLower.includes('memoria') || descLower.includes('notebook') || descLower.includes('computador') || descLower.includes('dell')) {
         setCategoria('Hardware (PCs, Notebooks, Servidores)');
       } else if (descLower.includes('licenca') || descLower.includes('software') || descLower.includes('antivirus')) {
-        setCategoria('Software & Licenças');
+        setCategoria('Software & Licenças (SaaS, SO, Antivírus)');
       }
 
       toast.success(
         `✨ NF-e Nº ${dadosNfe.numeroNf || 'importada'} processada! ${dadosNfe.fornecedor} • ${formatCurrency(Number(dadosNfe.valor) || 0)}`
       );
 
-      // Limpa erros
       setErrors({});
 
-      // Faz o upload do próprio arquivo XML para o Supabase Storage como comprovante oficial
       setIsUploadingFile(true);
       try {
         const res = await uploadComprovanteNf(file);
@@ -353,20 +423,17 @@ export const CompraModal: React.FC<CompraModalProps> = ({
 
   // Upload geral de arquivo (XML, PDF, Imagens)
   const handleUploadFile = async (file: File) => {
-    // Se for arquivo XML, aciona leitura inteligente de NF-e
     if (file.name.toLowerCase().endsWith('.xml') || file.type === 'text/xml' || file.type === 'application/xml') {
       await processarXmlNfe(file);
       return;
     }
 
-    // Validação de tamanho (máximo 15MB)
     const MAX_SIZE = 15 * 1024 * 1024;
     if (file.size > MAX_SIZE) {
       toast.error('O arquivo é muito grande. O limite máximo permitido é 15MB.');
       return;
     }
 
-    // Validação de tipo
     const validTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg'];
     if (!validTypes.includes(file.type) && !file.name.match(/\.(pdf|jpe?g|png)$/i)) {
       toast.error('Formato não suportado. Por favor, envie arquivos em formato XML (NF-e), PDF, PNG ou JPG.');
@@ -426,6 +493,30 @@ export const CompraModal: React.FC<CompraModalProps> = ({
     }
   };
 
+  // Computações para a Modalidade Parcelada
+  const valorNumerico = parseFloat(valor.replace(',', '.')) || 0;
+  const valorParcelaCalculado = numParcelas > 0 ? valorNumerico / numParcelas : 0;
+  const dataFinalParcelas = useMemo(() => {
+    if (!dataCompra || numParcelas <= 1) return dataCompra;
+    return addMonths(dataCompra, numParcelas - 1);
+  }, [dataCompra, numParcelas]);
+
+  // Computações para a Modalidade Recorrente Mensal
+  const mesesRecorrentesCalculados = useMemo(() => {
+    if (duracaoRecorrencia === 'fim_do_ano') {
+      return calcularMesesRestantesAno(dataCompra);
+    }
+    if (duracaoRecorrencia === '6_meses') return 6;
+    if (duracaoRecorrencia === 'personalizado') return Math.max(1, mesesPersonalizados || 1);
+    return 12; // 12_meses
+  }, [duracaoRecorrencia, dataCompra, mesesPersonalizados]);
+
+  const valorTotalAnualRecorrente = valorNumerico * mesesRecorrentesCalculados;
+  const dataFinalRecorrencia = useMemo(() => {
+    if (!dataCompra || mesesRecorrentesCalculados <= 1) return dataCompra;
+    return addMonths(dataCompra, mesesRecorrentesCalculados - 1);
+  }, [dataCompra, mesesRecorrentesCalculados]);
+
   // Validação do formulário
   const validarFormulario = (): boolean => {
     const novosErros: Record<string, string> = {};
@@ -438,7 +529,6 @@ export const CompraModal: React.FC<CompraModalProps> = ({
       novosErros.descricao = 'A descrição detalhada da compra é obrigatória.';
     }
 
-    const valorNumerico = parseFloat(valor.replace(',', '.'));
     if (isNaN(valorNumerico) || valorNumerico <= 0) {
       novosErros.valor = 'Informe um valor válido e maior que zero (R$).';
     }
@@ -463,7 +553,7 @@ export const CompraModal: React.FC<CompraModalProps> = ({
     return Object.keys(novosErros).length === 0;
   };
 
-  // Submissão do formulário
+  // Submissão do formulário (com suporte a desmembramento em lote de parcelas e recorrências)
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -472,31 +562,148 @@ export const CompraModal: React.FC<CompraModalProps> = ({
       return;
     }
 
-    const valorNumerico = parseFloat(valor.replace(',', '.'));
-
-    const payload: CompraInput | Compra = {
-      ...(compraEmEdicao?.id ? { id: compraEmEdicao.id } : {}),
-      codigo_ti: codigoTi.trim() || null,
-      data_compra: dataCompra,
-      tipo,
-      fornecedor: fornecedor.trim(),
-      cnpj: cnpj.replace(/\D/g, '') ? cnpj.trim() : null,
-      descricao: descricao.trim(),
-      categoria: categoria.trim(),
-      centro_custo: centroCusto.trim() || null,
-      valor: valorNumerico,
-      forma_pagamento: formaPagamento.trim() || null,
-      status_pagamento: statusPagamento,
-      parcelas: parcelas.trim() || null,
-      garantia: garantia ? garantia : null,
-      link_nf: linkNf || null,
-      nome_arquivo_nf: nomeArquivoNf || null,
-      observacoes: observacoes.trim() || null,
-    };
-
     setIsSaving(true);
     try {
-      await onSalvar(payload);
+      const isEditing = Boolean(compraEmEdicao?.id);
+
+      // CASO 1: Edição de Registro Unitário Existente
+      if (isEditing) {
+        let parcelasFormatada = 'À vista';
+        if (modalidadePagamento === 'parcelado') {
+          parcelasFormatada = `${numParcelas}x de ${formatCurrency(valorParcelaCalculado)}`;
+        } else if (modalidadePagamento === 'recorrente_mensal') {
+          parcelasFormatada = `Recorrente Mensal (${mesesRecorrentesCalculados} meses)`;
+        }
+
+        const payload: Compra = {
+          id: compraEmEdicao!.id,
+          codigo_ti: codigoTi.trim() || null,
+          data_compra: dataCompra,
+          tipo,
+          fornecedor: fornecedor.trim(),
+          cnpj: cnpj.replace(/\D/g, '') ? cnpj.trim() : null,
+          descricao: descricao.trim(),
+          categoria: categoria.trim(),
+          centro_custo: centroCusto.trim() || null,
+          valor: valorNumerico,
+          forma_pagamento: formaPagamento.trim() || null,
+          status_pagamento: statusPagamento,
+          parcelas: parcelasFormatada,
+          garantia: garantia ? garantia : null,
+          link_nf: linkNf || null,
+          nome_arquivo_nf: nomeArquivoNf || null,
+          observacoes: observacoes.trim() || null,
+        };
+
+        await onSalvar(payload);
+        toast.success('Lançamento atualizado com sucesso!');
+        onClose();
+        return;
+      }
+
+      // CASO 2: Nova Compra Parcelada com Desmembramento Automático em Lote
+      if (modalidadePagamento === 'parcelado' && desmembrarParcelas && numParcelas > 1) {
+        const baseParcela = Math.floor((valorNumerico / numParcelas) * 100) / 100;
+        const restoCentavos = Number((valorNumerico - baseParcela * numParcelas).toFixed(2));
+
+        const loteCompras: CompraInput[] = [];
+
+        for (let i = 0; i < numParcelas; i++) {
+          const valorDestaParcela = i === 0 ? Number((baseParcela + restoCentavos).toFixed(2)) : baseParcela;
+          const dataDestaParcela = addMonths(dataCompra, i);
+          const indicadorParcela = `${i + 1}/${numParcelas}`;
+
+          loteCompras.push({
+            codigo_ti: codigoTi.trim() ? `${codigoTi.trim()} (${indicadorParcela})` : null,
+            data_compra: dataDestaParcela,
+            tipo: tipo || 'Produto',
+            fornecedor: fornecedor.trim(),
+            cnpj: cnpj.replace(/\D/g, '') ? cnpj.trim() : null,
+            descricao: `${descricao.trim()} (Parcela ${indicadorParcela})`,
+            categoria: categoria.trim(),
+            centro_custo: centroCusto.trim() || null,
+            valor: valorDestaParcela,
+            forma_pagamento: formaPagamento.trim() || null,
+            status_pagamento: i === 0 ? statusPagamento : 'Pendente',
+            parcelas: `Parcela ${indicadorParcela}`,
+            garantia: garantia ? garantia : null,
+            link_nf: linkNf || null,
+            nome_arquivo_nf: nomeArquivoNf || null,
+            observacoes: observacoes.trim() ? `${observacoes.trim()} | Parcelamento em ${numParcelas}x` : `Parcelamento em ${numParcelas}x`,
+          });
+        }
+
+        await onSalvar(loteCompras);
+        toast.success(`🎉 Lançamento desmembrado em ${numParcelas} parcelas mensais cadastradas com sucesso!`);
+        onClose();
+        return;
+      }
+
+      // CASO 3: Nova Despesa Recorrente Mensal com Geração Futura Automática
+      if (modalidadePagamento === 'recorrente_mensal' && gerarMensalidadesFuturas && mesesRecorrentesCalculados > 1) {
+        const loteRecorrente: CompraInput[] = [];
+
+        for (let i = 0; i < mesesRecorrentesCalculados; i++) {
+          const dataDesteMes = addMonths(dataCompra, i);
+          const indicadorMes = `${i + 1}/${mesesRecorrentesCalculados}`;
+
+          loteRecorrente.push({
+            codigo_ti: codigoTi.trim() ? `${codigoTi.trim()} (${indicadorMes})` : null,
+            data_compra: dataDesteMes,
+            tipo: tipo || 'Contrato Mensal',
+            fornecedor: fornecedor.trim(),
+            cnpj: cnpj.replace(/\D/g, '') ? cnpj.trim() : null,
+            descricao: `${descricao.trim()} (${indicadorMes})`,
+            categoria: categoria.trim(),
+            centro_custo: centroCusto.trim() || null,
+            valor: valorNumerico,
+            forma_pagamento: formaPagamento.trim() || null,
+            status_pagamento: i === 0 ? statusPagamento : 'Pendente',
+            parcelas: `Recorrente (${indicadorMes})`,
+            garantia: garantia ? garantia : null,
+            link_nf: i === 0 ? linkNf || null : null,
+            nome_arquivo_nf: i === 0 ? nomeArquivoNf || null : null,
+            observacoes: observacoes.trim()
+              ? `${observacoes.trim()} | Recorrente Mensal (${mesesRecorrentesCalculados} meses)`
+              : `Recorrência Mensal programada (${mesesRecorrentesCalculados} meses)`,
+          });
+        }
+
+        await onSalvar(loteRecorrente);
+        toast.success(`🔄 ${mesesRecorrentesCalculados} mensalidades recorrentes programadas no sistema!`);
+        onClose();
+        return;
+      }
+
+      // CASO 4: Lançamento Único Convencional (À vista ou registro consolidado)
+      let parcelasFinal = 'À vista';
+      if (modalidadePagamento === 'parcelado') {
+        parcelasFinal = `${numParcelas}x de ${formatCurrency(valorParcelaCalculado)}`;
+      } else if (modalidadePagamento === 'recorrente_mensal') {
+        parcelasFinal = `Recorrente Mensal (${mesesRecorrentesCalculados} meses)`;
+      }
+
+      const payloadUnico: CompraInput = {
+        codigo_ti: codigoTi.trim() || null,
+        data_compra: dataCompra,
+        tipo,
+        fornecedor: fornecedor.trim(),
+        cnpj: cnpj.replace(/\D/g, '') ? cnpj.trim() : null,
+        descricao: descricao.trim(),
+        categoria: categoria.trim(),
+        centro_custo: centroCusto.trim() || null,
+        valor: valorNumerico,
+        forma_pagamento: formaPagamento.trim() || null,
+        status_pagamento: statusPagamento,
+        parcelas: parcelasFinal,
+        garantia: garantia ? garantia : null,
+        link_nf: linkNf || null,
+        nome_arquivo_nf: nomeArquivoNf || null,
+        observacoes: observacoes.trim() || null,
+      };
+
+      await onSalvar(payloadUnico);
+      toast.success('Compra cadastrada com sucesso!');
       onClose();
     } catch (err: any) {
       console.error('Erro ao salvar compra:', err);
@@ -540,7 +747,7 @@ export const CompraModal: React.FC<CompraModalProps> = ({
               <p className="text-xs text-slate-500 font-medium">
                 {isEditing
                   ? 'Atualize as informações do registro e anexe os comprovantes fiscais.'
-                  : 'Cadastre com 1 clique usando modelos prontos ou importando o XML da NF-e.'}
+                  : 'Cadastre com 1 clique usando modelos, parcelamento inteligente ou despesas recorrentes mensais.'}
               </p>
             </div>
           </div>
@@ -725,7 +932,13 @@ export const CompraModal: React.FC<CompraModalProps> = ({
                 </label>
                 <select
                   value={tipo}
-                  onChange={(e) => setTipo(e.target.value as TipoDespesa)}
+                  onChange={(e) => {
+                    const novoTipo = e.target.value as TipoDespesa;
+                    setTipo(novoTipo);
+                    if (novoTipo === 'Assinatura Recorrente (SaaS)' || novoTipo === 'Contrato Mensal') {
+                      setModalidadePagamento('recorrente_mensal');
+                    }
+                  }}
                   className="w-full h-10 px-3 text-xs sm:text-sm rounded-xl border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition-all"
                 >
                   {TIPOS_DESPESA.map((t) => (
@@ -808,7 +1021,7 @@ export const CompraModal: React.FC<CompraModalProps> = ({
             </div>
           </div>
 
-          {/* Seção 3: Valores, Prazos e Pagamento */}
+          {/* Seção 3: Valores, Prazos e Condição de Pagamento */}
           <div className="space-y-4 pt-2 border-t border-slate-100">
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
               <DollarSign className="w-3.5 h-3.5 text-blue-600" />
@@ -819,7 +1032,8 @@ export const CompraModal: React.FC<CompraModalProps> = ({
               {/* Valor (R$) */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Valor Total (R$) <span className="text-rose-500">*</span>
+                  {modalidadePagamento === 'recorrente_mensal' ? 'Valor Mensal (R$)' : 'Valor Total (R$)'}{' '}
+                  <span className="text-rose-500">*</span>
                 </label>
                 <div className="relative">
                   <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">
@@ -847,10 +1061,11 @@ export const CompraModal: React.FC<CompraModalProps> = ({
                 )}
               </div>
 
-              {/* Data da Compra */}
+              {/* Data da Compra / 1ª Parcela */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Data da Compra <span className="text-rose-500">*</span>
+                  {modalidadePagamento === 'a_vista' ? 'Data da Compra' : 'Data de Início (1º Mês)'}{' '}
+                  <span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="date"
@@ -888,10 +1103,10 @@ export const CompraModal: React.FC<CompraModalProps> = ({
                 </select>
               </div>
 
-              {/* Status do Pagamento */}
+              {/* Status do Pagamento (1º Mês / Compra) */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Status do Pagamento <span className="text-rose-500">*</span>
+                  Status de Pagamento <span className="text-rose-500">*</span>
                 </label>
                 <select
                   value={statusPagamento}
@@ -907,25 +1122,298 @@ export const CompraModal: React.FC<CompraModalProps> = ({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              {/* Parcelas */}
+            {/* SELETOR INTERATIVO: MODALIDADE DE COBRANÇA & PERIODICIDADE */}
+            <div className="bg-slate-50 border border-slate-200/90 rounded-2xl p-4 space-y-4">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Condição / Parcelas
+                <label className="block text-xs font-bold text-slate-800 mb-2 flex items-center justify-between">
+                  <span>Periodicidade & Duração do Pagamento:</span>
+                  <span className="text-[11px] text-slate-400 font-normal">
+                    Selecione apenas com 1 clique do mouse
+                  </span>
                 </label>
-                <input
-                  type="text"
-                  value={parcelas}
-                  onChange={(e) => setParcelas(e.target.value)}
-                  placeholder="Ex: À vista, 3x s/ juros, Mensal"
-                  className="w-full h-10 px-3 text-xs sm:text-sm rounded-xl border border-slate-300 bg-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition-all"
-                />
+
+                {/* 3 Opções Principais com Botões Estilizados */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setModalidadePagamento('a_vista');
+                      setStatusPagamento('Pago');
+                    }}
+                    className={`flex items-center justify-center gap-2 p-3 rounded-xl border text-xs font-bold transition-all ${
+                      modalidadePagamento === 'a_vista'
+                        ? 'bg-blue-600 text-white border-blue-600 shadow-sm shadow-blue-500/20'
+                        : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300 hover:bg-slate-100/60'
+                    }`}
+                  >
+                    <Banknote className="w-4 h-4" />
+                    <span>À Vista / Pagamento Único</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setModalidadePagamento('parcelado');
+                      setStatusPagamento('Parcelado');
+                    }}
+                    className={`flex items-center justify-center gap-2 p-3 rounded-xl border text-xs font-bold transition-all ${
+                      modalidadePagamento === 'parcelado'
+                        ? 'bg-blue-600 text-white border-blue-600 shadow-sm shadow-blue-500/20'
+                        : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300 hover:bg-slate-100/60'
+                    }`}
+                  >
+                    <CreditCard className="w-4 h-4" />
+                    <span>Parcelado (X Vezes)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setModalidadePagamento('recorrente_mensal');
+                      setStatusPagamento('Pago');
+                      if (tipo === 'Produto') {
+                        setTipo('Contrato Mensal');
+                      }
+                    }}
+                    className={`flex items-center justify-center gap-2 p-3 rounded-xl border text-xs font-bold transition-all ${
+                      modalidadePagamento === 'recorrente_mensal'
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm shadow-indigo-500/20'
+                        : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300 hover:bg-slate-100/60'
+                    }`}
+                  >
+                    <Repeat className="w-4 h-4" />
+                    <span>Recorrente Todo Mês</span>
+                  </button>
+                </div>
               </div>
 
+              {/* SUBPAINEL: OPÇÕES DE PARCELAMENTO & DURAÇÃO */}
+              {modalidadePagamento === 'parcelado' && (
+                <div className="bg-white p-4 rounded-xl border border-blue-200 shadow-2xs space-y-3 animate-in fade-in duration-150">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                      <CreditCard className="w-3.5 h-3.5 text-blue-600" />
+                      Duração das Parcelas:
+                    </span>
+
+                    {/* Botões Rápidos de Parcelas */}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {[2, 3, 4, 5, 6, 10, 12].map((n) => (
+                        <button
+                          key={n}
+                          type="button"
+                          onClick={() => setNumParcelas(n)}
+                          className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                            numParcelas === n
+                              ? 'bg-blue-600 text-white shadow-xs'
+                              : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                          }`}
+                        >
+                          {n}x
+                        </button>
+                      ))}
+
+                      {/* Campo para número de parcelas personalizado */}
+                      <div className="flex items-center gap-1 ml-1">
+                        <span className="text-[11px] text-slate-400 font-medium">Outro:</span>
+                        <input
+                          type="number"
+                          min="2"
+                          max="48"
+                          value={numParcelas}
+                          onChange={(e) => setNumParcelas(Math.max(2, parseInt(e.target.value) || 2))}
+                          className="w-14 h-7 text-xs font-bold font-mono text-center rounded-md border border-slate-300 bg-white"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Resumo do Cálculo da Parcela */}
+                  {valorNumerico > 0 && (
+                    <div className="p-3 bg-blue-50/80 rounded-xl border border-blue-200/70 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                      <div>
+                        <span className="text-blue-900 font-bold">
+                          {numParcelas}x de {formatCurrency(valorParcelaCalculado)}/mês
+                        </span>
+                        <p className="text-[11px] text-blue-700">
+                          Total acumulado: {formatCurrency(valorNumerico)} • Início em {dataCompra ? formatDate(dataCompra) : 'Hoje'} até {formatDate(dataFinalParcelas)}
+                        </p>
+                      </div>
+                      <span className="px-2 py-0.5 rounded-full bg-blue-200/60 text-blue-800 text-[10px] font-bold self-start sm:self-auto">
+                        Duração: {numParcelas} meses
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Opção para desmembrar em lançamentos automáticos no sistema */}
+                  {!isEditing && (
+                    <label className="flex items-start gap-2.5 p-2 rounded-lg hover:bg-slate-50 cursor-pointer transition-colors text-xs text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={desmembrarParcelas}
+                        onChange={(e) => setDesmembrarParcelas(e.target.checked)}
+                        className="mt-0.5 w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-slate-300 cursor-pointer"
+                      />
+                      <div>
+                        <span className="font-bold text-slate-900">
+                          Desmembrar e lançar automaticamente cada parcela no seu respectivo mês ({numParcelas} lançamentos)
+                        </span>
+                        <p className="text-[11px] text-slate-500">
+                          Cria as parcelas nos meses correspondentes com vencimentos automáticos. A 1ª parcela fica com status "{statusPagamento}" e as seguintes como "Pendente".
+                        </p>
+                      </div>
+                    </label>
+                  )}
+                </div>
+              )}
+
+              {/* SUBPAINEL: OPÇÕES DE RECORRÊNCIA MENSAL (TODO MÊS) */}
+              {modalidadePagamento === 'recorrente_mensal' && (
+                <div className="bg-white p-4 rounded-xl border border-indigo-200 shadow-2xs space-y-3 animate-in fade-in duration-150">
+                  <div className="flex items-center gap-2 pb-1 border-b border-indigo-100">
+                    <Repeat className="w-4 h-4 text-indigo-600" />
+                    <span className="text-xs font-bold text-indigo-950">
+                      Despesa Contínua / Contrato Mensal (Internet, SaaS, Manutenções)
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-2">
+                      Duração da Recorrência Mensal:
+                    </label>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setDuracaoRecorrencia('fim_do_ano')}
+                        className={`p-2.5 rounded-xl border text-xs font-medium text-left transition-all ${
+                          duracaoRecorrencia === 'fim_do_ano'
+                            ? 'bg-indigo-50 border-indigo-500 text-indigo-900 font-bold ring-2 ring-indigo-500/20'
+                            : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        <div className="flex items-center gap-1 mb-0.5">
+                          <CalendarDays className="w-3.5 h-3.5 text-indigo-600" />
+                          <span>Até o Fim do Ano</span>
+                        </div>
+                        <p className="text-[10px] text-slate-500 font-normal">
+                          {calcularMesesRestantesAno(dataCompra)} meses restantes em {dataCompra ? dataCompra.slice(0, 4) : '2026'}
+                        </p>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setDuracaoRecorrencia('12_meses')}
+                        className={`p-2.5 rounded-xl border text-xs font-medium text-left transition-all ${
+                          duracaoRecorrencia === '12_meses'
+                            ? 'bg-indigo-50 border-indigo-500 text-indigo-900 font-bold ring-2 ring-indigo-500/20'
+                            : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        <div className="flex items-center gap-1 mb-0.5">
+                          <Repeat className="w-3.5 h-3.5 text-indigo-600" />
+                          <span>12 Meses (1 Ano)</span>
+                        </div>
+                        <p className="text-[10px] text-slate-500 font-normal">
+                          Contrato anual padrão
+                        </p>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setDuracaoRecorrencia('6_meses')}
+                        className={`p-2.5 rounded-xl border text-xs font-medium text-left transition-all ${
+                          duracaoRecorrencia === '6_meses'
+                            ? 'bg-indigo-50 border-indigo-500 text-indigo-900 font-bold ring-2 ring-indigo-500/20'
+                            : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        <div className="flex items-center gap-1 mb-0.5">
+                          <span>⏱️ 6 Meses</span>
+                        </div>
+                        <p className="text-[10px] text-slate-500 font-normal">
+                          Semestral
+                        </p>
+                      </button>
+
+                      <div
+                        className={`p-2 rounded-xl border text-xs transition-all ${
+                          duracaoRecorrencia === 'personalizado'
+                            ? 'bg-indigo-50 border-indigo-500 text-indigo-900 ring-2 ring-indigo-500/20'
+                            : 'bg-slate-50/70 border-slate-200 text-slate-700'
+                        }`}
+                      >
+                        <label
+                          className="flex items-center gap-1 mb-1 font-bold cursor-pointer"
+                          onClick={() => setDuracaoRecorrencia('personalizado')}
+                        >
+                          <span>Personalizado:</span>
+                        </label>
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number"
+                            min="1"
+                            max="60"
+                            value={mesesPersonalizados}
+                            onFocus={() => setDuracaoRecorrencia('personalizado')}
+                            onChange={(e) => {
+                              setDuracaoRecorrencia('personalizado');
+                              setMesesPersonalizados(Math.max(1, parseInt(e.target.value) || 1));
+                            }}
+                            className="w-12 h-6 px-1 text-center font-bold text-xs bg-white border border-slate-300 rounded"
+                          />
+                          <span className="text-[10px] text-slate-500">meses</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Projeção Financeira do Custo Recorrente */}
+                  {valorNumerico > 0 && (
+                    <div className="p-3 bg-indigo-50/80 rounded-xl border border-indigo-200/70 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                      <div>
+                        <span className="text-indigo-950 font-bold">
+                          {formatCurrency(valorNumerico)} / mês durante {mesesRecorrentesCalculados} meses
+                        </span>
+                        <p className="text-[11px] text-indigo-800">
+                          Previsão total de gastos: <strong>{formatCurrency(valorTotalAnualRecorrente)}</strong> (até {formatDate(dataFinalRecorrencia)})
+                        </p>
+                      </div>
+                      <span className="px-2 py-0.5 rounded-full bg-indigo-200/70 text-indigo-900 text-[10px] font-bold self-start sm:self-auto">
+                        {mesesRecorrentesCalculados} meses programados
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Opção para gerar os lançamentos recorrentes no sistema */}
+                  {!isEditing && (
+                    <label className="flex items-start gap-2.5 p-2 rounded-lg hover:bg-slate-50 cursor-pointer transition-colors text-xs text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={gerarMensalidadesFuturas}
+                        onChange={(e) => setGerarMensalidadesFuturas(e.target.checked)}
+                        className="mt-0.5 w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 cursor-pointer"
+                      />
+                      <div>
+                        <span className="font-bold text-slate-900">
+                          Lançar automaticamente as {mesesRecorrentesCalculados} mensalidades no sistema para acompanhamento orçamentário
+                        </span>
+                        <p className="text-[11px] text-slate-500">
+                          Gera a despesa de cada mês automaticamente. O mês atual fica como "{statusPagamento}" e os meses seguintes ficam como "Pendente" para controle financeiro.
+                        </p>
+                      </div>
+                    </label>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Garantia e Código T.I */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {/* Garantia / Licença até */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Garantia / Validade até
+                  Garantia / Validade até (Opcional)
                 </label>
                 <input
                   type="date"
@@ -959,7 +1447,6 @@ export const CompraModal: React.FC<CompraModalProps> = ({
             </h3>
 
             {linkNf ? (
-              // Arquivo já anexado
               <div className="flex items-center justify-between p-4 rounded-xl border border-emerald-200 bg-emerald-50/70 text-slate-800">
                 <div className="flex items-center gap-3 overflow-hidden">
                   <div className="w-9 h-9 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
@@ -996,7 +1483,6 @@ export const CompraModal: React.FC<CompraModalProps> = ({
                 </div>
               </div>
             ) : (
-              // Dropzone para novo upload
               <div
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
@@ -1061,32 +1547,53 @@ export const CompraModal: React.FC<CompraModalProps> = ({
           </div>
 
           {/* Rodapé com Botões de Ação */}
-          <div className="pt-4 border-t border-slate-200/80 flex items-center justify-end gap-3 shrink-0">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={isSaving || isUploadingFile || isParsingXml}
-              className="px-5 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 transition-colors disabled:opacity-50"
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              disabled={isSaving || isUploadingFile || isParsingXml}
-              className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-md shadow-blue-500/20 disabled:bg-blue-400 disabled:cursor-not-allowed transition-all"
-            >
-              {isSaving ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin text-white" />
-                  <span>Salvando no Supabase...</span>
-                </>
-              ) : (
-                <>
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>{isEditing ? 'Salvar Alterações' : 'Confirmar & Cadastrar Compra'}</span>
-                </>
-              )}
-            </button>
+          <div className="pt-4 border-t border-slate-200/80 flex items-center justify-between gap-3 shrink-0">
+            <div className="text-[11px] text-slate-500 hidden sm:flex items-center gap-1.5">
+              <Info className="w-3.5 h-3.5 text-blue-600" />
+              <span>
+                {modalidadePagamento === 'parcelado' && desmembrarParcelas && !isEditing
+                  ? `Serão gerados ${numParcelas} lançamentos mensais no Supabase.`
+                  : modalidadePagamento === 'recorrente_mensal' && gerarMensalidadesFuturas && !isEditing
+                  ? `Serão programadas ${mesesRecorrentesCalculados} mensalidades no Supabase.`
+                  : 'Lançamento financeiro individual.'}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={isSaving || isUploadingFile || isParsingXml}
+                className="px-5 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 transition-colors disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={isSaving || isUploadingFile || isParsingXml}
+                className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-md shadow-blue-500/20 disabled:bg-blue-400 disabled:cursor-not-allowed transition-all"
+              >
+                {isSaving ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-white" />
+                    <span>Salvando no Supabase...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>
+                      {isEditing
+                        ? 'Salvar Alterações'
+                        : modalidadePagamento === 'parcelado' && desmembrarParcelas
+                        ? `Cadastrar ${numParcelas}x Parcelas`
+                        : modalidadePagamento === 'recorrente_mensal' && gerarMensalidadesFuturas
+                        ? `Programar ${mesesRecorrentesCalculados} Mensalidades`
+                        : 'Confirmar & Cadastrar Compra'}
+                    </span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </form>
       </div>
