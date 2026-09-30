@@ -120,7 +120,7 @@ export const EquipamentoModal: React.FC<EquipamentoModalProps> = ({
       setObservacoes('');
     }
     setErrors({});
-  }, [isOpen, equipamentoEmEdicao, proximoPatrimonioSugerido]);
+  }, [isOpen, equipamentoEmEdicao]);
 
   // Se o usuário selecionar uma compra existente, pré-preenche fornecedor, data e valor
   const handleCompraChange = (selectedCompraId: string) => {
