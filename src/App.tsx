@@ -5,10 +5,10 @@ import { KPICards } from './components/KPICards';
 import { DashboardView } from './components/DashboardView';
 import { ComprasView } from './components/ComprasView';
 import { CompraModal } from './components/CompraModal';
+import { RelatoriosView } from './components/RelatoriosView';
 import { getCompras, deleteCompra, saveCompra } from './services/compras';
 import { calculateDashboardData } from './utils/dashboard';
 import type { Compra, CompraInput, DashboardData } from './types';
-import { FileSpreadsheet } from 'lucide-react';
 
 export default function App() {
   const [abaAtiva, setAbaAtiva] = useState<TabType>('dashboard');
@@ -168,17 +168,12 @@ export default function App() {
         )}
 
         {abaAtiva === 'relatorios' && (
-          <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center shadow-xs">
-            <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center mx-auto mb-3">
-              <FileSpreadsheet className="w-6 h-6" />
-            </div>
-            <h3 className="text-lg font-bold text-slate-800">
-              Módulo de Relatórios & Exportação
-            </h3>
-            <p className="text-sm text-slate-500 mt-1 max-w-md mx-auto">
-              Emissão de relatórios gerenciais consolidados em PDF e planilhas estruturadas .XLSX.
-            </p>
-          </div>
+          <RelatoriosView
+            compras={compras}
+            ano={anoSelecionado}
+            anosDisponiveis={anosDisponiveis}
+            onMudarAno={setAnoSelecionado}
+          />
         )}
       </main>
 
