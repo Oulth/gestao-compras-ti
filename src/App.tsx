@@ -10,6 +10,7 @@ import { InventarioView } from './components/InventarioView';
 import { EquipamentoModal } from './components/EquipamentoModal';
 import { TermoResponsabilidadeModal } from './components/TermoResponsabilidadeModal';
 import { EtiquetasModal } from './components/EtiquetasModal';
+import { GerarEquipamentoCompraModal } from './components/GerarEquipamentoCompraModal';
 import { getCompras, deleteCompra, saveCompra } from './services/compras';
 import {
   getEquipamentos,
@@ -39,6 +40,7 @@ export default function App() {
   const [compraEmEdicao, setCompraEmEdicao] = useState<Compra | null>(null);
 
   // Estados dos modais de Inventário
+  const [compraParaGerarEquipamento, setCompraParaGerarEquipamento] = useState<Compra | null>(null);
   const [isEquipamentoModalOpen, setIsEquipamentoModalOpen] = useState<boolean>(false);
   const [equipamentoEmEdicao, setEquipamentoEmEdicao] = useState<Equipamento | null>(null);
   const [isTermoModalOpen, setIsTermoModalOpen] = useState<boolean>(false);
@@ -284,6 +286,7 @@ export default function App() {
             onEditarCompra={handleEditarCompra}
             onDuplicarCompra={handleDuplicarCompra}
             onExcluirCompra={handleExcluirCompra}
+            onGerarEquipamento={(compra) => setCompraParaGerarEquipamento(compra)}
           />
         )}
 
@@ -299,6 +302,7 @@ export default function App() {
         {abaAtiva === 'inventario' && (
           <InventarioView
             equipamentos={equipamentos}
+            compras={compras}
             onNovoEquipamento={handleNovoEquipamento}
             onEditarEquipamento={handleEditarEquipamento}
             onExcluirEquipamento={handleExcluirEquipamento}
@@ -372,6 +376,15 @@ export default function App() {
         }}
         equipamentos={equipamentos}
         equipamentoSelecionado={equipamentoEtiquetas}
+      />
+
+      {/* Modal de Gerar Equipamento a partir da Compra */}
+      <GerarEquipamentoCompraModal
+        isOpen={!!compraParaGerarEquipamento}
+        onClose={() => setCompraParaGerarEquipamento(null)}
+        compra={compraParaGerarEquipamento}
+        onSalvar={handleSalvarEquipamento}
+        proximoPatrimonioSugerido={proximoPatrimonioSugerido}
       />
     </div>
   );

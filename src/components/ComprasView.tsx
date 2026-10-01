@@ -19,6 +19,7 @@ import {
   Loader2,
   Building2,
   Copy,
+  PackagePlus,
 } from 'lucide-react';
 import type { Compra, TipoDespesa, StatusPagamento } from '../types';
 import { formatDate, formatCurrency, formatCnpj } from '../utils/formatters';
@@ -34,6 +35,7 @@ export interface ComprasViewProps {
   onEditarCompra?: (compra: Compra) => void;
   onDuplicarCompra?: (compra: Compra) => void;
   onExcluirCompra?: (id: string) => Promise<void> | void;
+  onGerarEquipamento?: (compra: Compra) => void;
   categorias?: string[];
 }
 
@@ -69,6 +71,7 @@ export const ComprasView: React.FC<ComprasViewProps> = ({
   onEditarCompra,
   onDuplicarCompra,
   onExcluirCompra,
+  onGerarEquipamento,
   categorias: categoriasProp,
 }) => {
   // Filtros
@@ -710,6 +713,16 @@ export const ComprasView: React.FC<ComprasViewProps> = ({
                     {/* Ações (Duplicar / Editar / Excluir) */}
                     <td className="no-print py-3.5 px-4 text-right whitespace-nowrap">
                       <div className="flex items-center justify-end gap-1">
+                        {onGerarEquipamento && (
+                          <button
+                            type="button"
+                            onClick={() => onGerarEquipamento(compra)}
+                            className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
+                            title="📦 Enviar ao Inventário (Gerar tombamento de patrimônio a partir desta compra)"
+                          >
+                            <PackagePlus className="w-4 h-4" />
+                          </button>
+                        )}
                         {onDuplicarCompra && (
                           <button
                             type="button"

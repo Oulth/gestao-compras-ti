@@ -17,15 +17,19 @@ import {
   X,
   AlertTriangle,
   Loader2,
+  ExternalLink,
 } from 'lucide-react';
 import type {
   Equipamento,
   StatusEquipamento,
+  Compra,
 } from '../types';
 import { exportarInventarioParaExcel } from '../utils/exportInventarioExcel';
+import { formatDate, formatCurrency } from '../utils/formatters';
 
 interface InventarioViewProps {
   equipamentos: Equipamento[];
+  compras?: Compra[];
   onNovoEquipamento: () => void;
   onEditarEquipamento: (equipamento: Equipamento) => void;
   onExcluirEquipamento: (id: string) => Promise<void>;
@@ -35,6 +39,7 @@ interface InventarioViewProps {
 
 export const InventarioView: React.FC<InventarioViewProps> = ({
   equipamentos,
+  compras = [],
   onNovoEquipamento,
   onEditarEquipamento,
   onExcluirEquipamento,
@@ -50,6 +55,13 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
   // Modal de exclusão
   const [equipamentoParaExcluir, setEquipamentoParaExcluir] = useState<Equipamento | null>(null);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
+
+  // Mapa de compras para busca rápida por ID
+  const comprasMap = useMemo(() => {
+    const map = new Map<string, Compra>();
+    compras.forEach((c) => map.set(c.id, c));
+    return map;
+  }, [compras]);
 
   // Listas únicas para os selects de filtro
   const tiposDisponiveis = useMemo(() => {
@@ -466,6 +478,32 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
                           {item.especificacoes}
                         </div>
                       )}
+                      {item.compra_id && comprasMap.get(item.compra_id) && (() => {
+                        const compraVinculada = comprasMap.get(item.compra_id)!;
+                        return (
+                          <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                            <span
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-50 text-blue-800 border border-blue-200"
+                              title={`Aquisição em ${formatDate(compraVinculada.data_compra)} • ${formatCurrency(compraVinculada.valor)}`}
+                            >
+                              <FileText className="w-3 h-3 text-blue-600" />
+                              <span>{compraVinculada.codigo_ti || 'NF vinculada'} • {compraVinculada.fornecedor}</span>
+                            </span>
+                            {compraVinculada.link_nf && (
+                              <a
+                                href={compraVinculada.link_nf}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-0.5 text-[10px] font-bold text-blue-600 hover:text-blue-800 hover:underline"
+                                title={compraVinculada.nome_arquivo_nf || 'Visualizar Comprovante / NF'}
+                              >
+                                <span>Ver NF</span>
+                                <ExternalLink className="w-2.5 h-2.5" />
+                              </a>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </td>
 
                     {/* S/N */}

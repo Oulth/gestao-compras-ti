@@ -20,6 +20,8 @@ import {
   CalendarDays,
   Info,
   AlertTriangle,
+  KeyRound,
+  PenLine,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
@@ -37,6 +39,7 @@ import { parseNfeXml } from '../utils/nfeParser';
 import { parseNotaFiscalPdf } from '../utils/pdfParser';
 import { MODELOS_COMPRAS_RAPIDAS, type ModeloCompraRapida } from '../utils/presetsCompras';
 import { verificarDuplicidade, type ResultadoDuplicidade } from '../utils/duplicidadeDetector';
+import { decodificarChaveNfe } from '../utils/chaveNfeParser';
 
 export interface CompraModalProps {
   isOpen: boolean;
@@ -138,6 +141,8 @@ export const CompraModal: React.FC<CompraModalProps> = ({
   const [duracaoRecorrencia, setDuracaoRecorrencia] = useState<DuracaoRecorrencia>('12_meses');
   const [mesesPersonalizados, setMesesPersonalizados] = useState<number>(12);
   const [gerarMensalidadesFuturas, setGerarMensalidadesFuturas] = useState<boolean>(true);
+
+  const [chaveNfeInput, setChaveNfeInput] = useState<string>('');
 
   // Estados de controle e feedback
   const [isSearchingCnpj, setIsSearchingCnpj] = useState<boolean>(false);
@@ -264,10 +269,47 @@ export const CompraModal: React.FC<CompraModalProps> = ({
       setMesesPersonalizados(12);
       setGerarMensalidadesFuturas(true);
     }
+    setChaveNfeInput('');
     setIgnorarAvisoDuplicidade(false);
     setIsConfirmandoDuplicidadeModal(false);
     setErrors({});
   }, [isOpen, compraEmEdicao]);
+
+  // Decodifica Chave de Acesso de 44 dígitos da NF-e ou número da NF
+  const handleDecodificarChave = () => {
+    const limpa = chaveNfeInput.replace(/\D/g, '');
+    if (!limpa) {
+      toast.error('Informe a Chave de Acesso (44 dígitos) ou o Número da Nota Fiscal.');
+      return;
+    }
+
+    // Se for Chave de Acesso completa da NF-e (44 dígitos)
+    if (limpa.length === 44) {
+      const decodificada = decodificarChaveNfe(limpa);
+      if (decodificada) {
+        setCodigoTi(decodificada.codigoTi);
+        setCnpj(decodificada.cnpj);
+        if (!dataCompra) {
+          setDataCompra(decodificada.dataCompraSugerida);
+        }
+        setTipo('Produto');
+        realizarBuscaCnpj(decodificada.cnpj);
+        toast.success(
+          `✨ Chave decodificada: NF Nº ${decodificada.numeroNf} (${decodificada.ufSigla})! Consultando fornecedor na Receita Federal...`
+        );
+        return;
+      }
+    }
+
+    // Se for apenas o número da NF digitado (ex: 1747050)
+    if (limpa.length >= 1 && limpa.length <= 9) {
+      setCodigoTi(`NF-${limpa}`);
+      toast.info(`Número da Nota Fiscal definido: NF-${limpa}`);
+      return;
+    }
+
+    toast.warning('A chave de acesso oficial da NF-e deve possuir exatamente 44 dígitos numéricos.');
+  };
 
   // Aplica máscara de CNPJ enquanto o usuário digita
   const handleCnpjChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -914,53 +956,118 @@ export const CompraModal: React.FC<CompraModalProps> = ({
         {/* Corpo do Formulário com Scroll */}
         <form onSubmit={handleSubmit} className="overflow-y-auto px-6 py-6 space-y-6 flex-1 text-slate-800">
           
-          {/* PAINEL DE AUTOMAÇÕES E AGILIDADE (1 CLIQUE / XML) */}
+          {/* PAINEL DE ENTRADA COM 3 FORMAS CLARAS DE INICIAR */}
           {!isEditing && (
-            <div className="bg-gradient-to-r from-blue-50 via-indigo-50/40 to-slate-50 p-4 rounded-2xl border border-blue-200/80 shadow-xs space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-blue-200/60">
-                <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-lg bg-blue-600 text-white flex items-center justify-center">
-                    <Zap className="w-3.5 h-3.5" />
+            <div className="bg-gradient-to-br from-slate-50 via-blue-50/40 to-indigo-50/30 p-4 sm:p-5 rounded-2xl border border-blue-200/90 shadow-xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-blue-200/60">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-xs">
+                    <Zap className="w-4 h-4" />
                   </div>
-                  <span className="text-xs font-bold text-blue-950 uppercase tracking-wider">
-                    Automação Rápida: Zero Digitação Manual
-                  </span>
+                  <div>
+                    <h3 className="text-xs sm:text-sm font-bold text-slate-900 uppercase tracking-wider">
+                      Como você deseja iniciar este cadastro?
+                    </h3>
+                    <p className="text-[11px] text-slate-500 font-medium">
+                      Escolha uma das 3 opções abaixo ou altere qualquer campo manual livremente
+                    </p>
+                  </div>
                 </div>
-                
-                {/* Botão de Importação XML / PDF da Nota Fiscal */}
-                <div>
-                  <input
-                    ref={xmlInputRef}
-                    type="file"
-                    accept=".xml,application/pdf,text/xml,application/xml"
-                    onChange={(e) => {
-                      if (e.target.files && e.target.files[0]) {
-                        handleUploadFile(e.target.files[0]);
-                      }
-                    }}
-                    className="hidden"
-                  />
+
+                <input
+                  ref={xmlInputRef}
+                  type="file"
+                  accept=".xml,application/pdf,text/xml,application/xml"
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files[0]) {
+                      handleUploadFile(e.target.files[0]);
+                    }
+                  }}
+                  className="hidden"
+                />
+              </div>
+
+              {/* Grid com as 3 Opções Visuais */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {/* OPÇÃO 1: UPLOAD DE ARQUIVO (XML OU PDF) */}
+                <div className="p-3.5 rounded-xl border border-blue-200 bg-white hover:border-blue-400 hover:shadow-xs transition-all flex flex-col justify-between">
+                  <div className="space-y-1 mb-3">
+                    <div className="flex items-center gap-1.5 text-blue-700">
+                      <FileCode className="w-4 h-4" />
+                      <span className="text-[11px] font-bold uppercase tracking-wider">Opção 1 • Arquivo</span>
+                    </div>
+                    <p className="text-xs font-bold text-slate-800">Upload de XML ou PDF</p>
+                    <p className="text-[11px] text-slate-500 leading-snug">
+                      Lê produtos, valores, parcelas e CNPJ sem você precisar digitar nada.
+                    </p>
+                  </div>
                   <button
                     type="button"
                     onClick={() => xmlInputRef.current?.click()}
                     disabled={isParsingXml || isUploadingFile}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-white hover:bg-blue-600 text-blue-700 hover:text-white border border-blue-300 shadow-xs transition-all hover:scale-[1.02]"
-                    title="Selecione o arquivo .xml (NF-e) ou .pdf (NFS-e) para preencher tudo automaticamente sem digitar"
+                    className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-all cursor-pointer disabled:opacity-50"
                   >
                     {isParsingXml ? (
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     ) : (
-                      <FileCode className="w-3.5 h-3.5 text-blue-600 group-hover:text-white" />
+                      <UploadCloud className="w-3.5 h-3.5" />
                     )}
-                    <span>Importar Nota Fiscal (XML ou PDF)</span>
+                    <span>Carregar Arquivo (XML/PDF)</span>
                   </button>
+                </div>
+
+                {/* OPÇÃO 2: CHAVE DE ACESSO OU NÚMERO DA NOTA */}
+                <div className="p-3.5 rounded-xl border border-indigo-200 bg-white hover:border-indigo-400 hover:shadow-xs transition-all flex flex-col justify-between">
+                  <div className="space-y-1 mb-2">
+                    <div className="flex items-center gap-1.5 text-indigo-700">
+                      <KeyRound className="w-4 h-4" />
+                      <span className="text-[11px] font-bold uppercase tracking-wider">Opção 2 • Chave / Nº</span>
+                    </div>
+                    <p className="text-xs font-bold text-slate-800">Chave de Acesso da NF-e</p>
+                    <p className="text-[11px] text-slate-500 leading-snug">
+                      Cole a chave de 44 dígitos da DANFE ou apenas o número da nota.
+                    </p>
+                  </div>
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      value={chaveNfeInput}
+                      onChange={(e) => setChaveNfeInput(e.target.value)}
+                      placeholder="44 dígitos ou Nº NF..."
+                      className="flex-1 h-8 px-2.5 text-[11px] font-mono rounded-lg border border-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleDecodificarChave}
+                      className="px-2.5 h-8 rounded-lg text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white shrink-0 shadow-2xs transition-colors cursor-pointer"
+                    >
+                      Buscar
+                    </button>
+                  </div>
+                </div>
+
+                {/* OPÇÃO 3: PREENCHIMENTO MANUAL / COMPLEMENTAR */}
+                <div className="p-3.5 rounded-xl border border-slate-200 bg-white hover:border-slate-300 hover:shadow-xs transition-all flex flex-col justify-between">
+                  <div className="space-y-1 mb-3">
+                    <div className="flex items-center gap-1.5 text-slate-600">
+                      <PenLine className="w-4 h-4" />
+                      <span className="text-[11px] font-bold uppercase tracking-wider">Opção 3 • Manual</span>
+                    </div>
+                    <p className="text-xs font-bold text-slate-800">Preenchimento Manual</p>
+                    <p className="text-[11px] text-slate-500 leading-snug">
+                      Para compras sem nota fiscal ou para preencher/complementar itens abaixo.
+                    </p>
+                  </div>
+                  <div className="px-2.5 py-1.5 rounded-xl bg-slate-100 text-[11px] font-semibold text-slate-600 text-center">
+                    👇 Campos livres e editáveis abaixo
+                  </div>
                 </div>
               </div>
 
               {/* Botões de Modelos Rápidos de 1 Clique */}
-              <div>
-                <p className="text-[11px] font-semibold text-slate-500 mb-2 flex items-center gap-1">
-                  <span>⚡ Ou clique em uma despesa frequente para preencher em 1 clique:</span>
+              <div className="pt-2 border-t border-blue-200/50">
+                <p className="text-[11px] font-semibold text-slate-600 mb-2 flex items-center gap-1">
+                  <span>⚡ Ou preencha com 1 clique modelos de despesas frequentes:</span>
                 </p>
                 <div className="flex flex-wrap gap-1.5">
                   {MODELOS_COMPRAS_RAPIDAS.map((m) => (
@@ -1771,6 +1878,87 @@ export const CompraModal: React.FC<CompraModalProps> = ({
               placeholder="Ex: Aprovado pela diretoria em reunião, garantia estendida de 2 anos..."
               className="w-full h-10 px-3 text-xs sm:text-sm rounded-xl border border-slate-300 bg-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition-all"
             />
+          </div>
+
+          {/* RESUMO DA COMPRA PARA CONFERÊNCIA ANTES DE SALVAR */}
+          <div className="rounded-2xl border-2 border-blue-200 bg-gradient-to-br from-blue-50/70 via-indigo-50/40 to-white p-4 space-y-3 shadow-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 pb-2 border-b border-blue-200/70">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-lg bg-blue-600 text-white flex items-center justify-center shadow-2xs">
+                  <CheckCircle2 className="w-4 h-4" />
+                </div>
+                <h4 className="text-xs font-bold uppercase tracking-wider text-blue-950">
+                  Resumo da Compra para Conferência
+                </h4>
+              </div>
+              <span className="text-[11px] font-semibold text-slate-500">
+                Revise os dados antes de confirmar o cadastro
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+              <div className="space-y-0.5">
+                <span className="text-[11px] text-slate-400 font-semibold block">Fornecedor:</span>
+                <span className="font-bold text-slate-900 truncate block">
+                  {fornecedor || '— Não informado'}
+                </span>
+                {cnpj && <span className="text-[10px] text-slate-500 font-mono block">{cnpj}</span>}
+              </div>
+
+              <div className="space-y-0.5">
+                <span className="text-[11px] text-slate-400 font-semibold block">Nº da NF / Código:</span>
+                <span className="font-bold font-mono text-blue-700 block">
+                  {codigoTi || 'S/N (Sem número)'}
+                </span>
+                <span className="text-[10px] text-slate-500 block">
+                  Data: {dataCompra ? formatDate(dataCompra) : 'Hoje'}
+                </span>
+              </div>
+
+              <div className="space-y-0.5">
+                <span className="text-[11px] text-slate-400 font-semibold block">Classificação:</span>
+                <span className="font-semibold text-slate-800 block truncate">
+                  {categoria || 'Geral'}
+                </span>
+                <span className="text-[10px] text-slate-500 block truncate">
+                  {tipo} {centroCusto ? `• ${centroCusto}` : ''}
+                </span>
+              </div>
+
+              <div className="space-y-0.5">
+                <span className="text-[11px] text-slate-400 font-semibold block">Valor Total:</span>
+                <span className="font-black font-mono text-emerald-700 text-sm block">
+                  {valor ? formatCurrency(parseFloat(valor.replace(/\./g, '').replace(',', '.')) || 0) : 'R$ 0,00'}
+                </span>
+                <span className="text-[10px] text-slate-500 block">
+                  {modalidadePagamento === 'parcelado'
+                    ? `${numParcelas}x parcelas`
+                    : modalidadePagamento === 'recorrente_mensal'
+                    ? 'Recorrência mensal'
+                    : 'Pagamento à vista'}
+                </span>
+              </div>
+            </div>
+
+            {/* Anexo conferência */}
+            <div className="pt-2 border-t border-blue-200/50 flex items-center justify-between text-[11px]">
+              <span className="text-slate-500 flex items-center gap-1.5 truncate max-w-[70%]">
+                <FileText className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                <span>Anexo Fiscal:</span>
+                <strong className="text-slate-700 truncate">{nomeArquivoNf || 'Nenhum anexo enviado'}</strong>
+              </span>
+              {linkNf && (
+                <a
+                  href={linkNf}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-600 hover:text-blue-800 font-bold inline-flex items-center gap-1 shrink-0"
+                >
+                  <span>Ver arquivo</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              )}
+            </div>
           </div>
 
           {/* Rodapé com Botões de Ação */}
