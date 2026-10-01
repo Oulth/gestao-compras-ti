@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import type { Equipamento } from '../types';
 import { formatCurrency, formatDate } from './formatters';
+import { extrairQuantidadeEquipamento } from './inventarioUtils';
 
 export function exportarInventarioParaExcel(
   equipamentos: Equipamento[],
@@ -23,6 +24,7 @@ export function exportarInventarioParaExcel(
     'Tipo': eq.tipo,
     'Marca': eq.marca,
     'Modelo': eq.modelo,
+    'Qtd / Estoque': `${extrairQuantidadeEquipamento(eq)} un`,
     'Nº de Série (S/N)': eq.numero_serie || 'N/A',
     'Localização / Sala': eq.localizacao,
     'Status Operacional': eq.status,
@@ -43,6 +45,7 @@ export function exportarInventarioParaExcel(
     { wch: 22 }, // Tipo
     { wch: 18 }, // Marca
     { wch: 24 }, // Modelo
+    { wch: 16 }, // Qtd / Estoque
     { wch: 22 }, // S/N
     { wch: 26 }, // Localização
     { wch: 20 }, // Status
@@ -52,7 +55,6 @@ export function exportarInventarioParaExcel(
     { wch: 16 }, // Valor
     { wch: 35 }, // Especificações
     { wch: 30 }, // Acessórios
-    { wch: 30 }, // Observações
   ];
 
   const workbook = XLSX.utils.book_new();

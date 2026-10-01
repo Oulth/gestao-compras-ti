@@ -327,7 +327,7 @@ export const GerarEquipamentoCompraModal: React.FC<GerarEquipamentoCompraModalPr
         compra_id: compra.id,
         data_aquisicao: compra.data_compra || new Date().toISOString().split('T')[0],
         valor_estimado: item.valorUnitario,
-        especificacoes: `Item da Nota Fiscal ${compra.codigo_ti || 'S/N'} (${compra.fornecedor}) - Qtd: ${item.quantidade}x`,
+        especificacoes: `Item da Nota Fiscal ${compra.codigo_ti || 'S/N'} (${compra.fornecedor}) - Qtd: ${item.quantidade}x [QTD: ${item.quantidade}]`,
         acessorios: item.acessorios.trim() || null,
         observacoes: item.observacoes.trim() || null,
       }));
@@ -384,7 +384,7 @@ export const GerarEquipamentoCompraModal: React.FC<GerarEquipamentoCompraModalPr
         compra_id: compra.id,
         data_aquisicao: compra.data_compra || new Date().toISOString().split('T')[0],
         valor_estimado: itemAtivo.valorUnitario,
-        especificacoes: `Item ${itemAtualIndex + 1} de ${itensConfig.length} da NF ${compra.codigo_ti || 'S/N'} (${compra.fornecedor}) - Qtd: ${itemAtivo.quantidade}x`,
+        especificacoes: `Item ${itemAtualIndex + 1} de ${itensConfig.length} da NF ${compra.codigo_ti || 'S/N'} (${compra.fornecedor}) - Qtd: ${itemAtivo.quantidade}x [QTD: ${itemAtivo.quantidade}]`,
         acessorios: itemAtivo.acessorios.trim() || null,
         observacoes: itemAtivo.observacoes.trim() || null,
       };

@@ -18,20 +18,31 @@ import {
   AlertTriangle,
   Loader2,
   ExternalLink,
+  Boxes,
+  MinusCircle,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import type {
   Equipamento,
+  EquipamentoInput,
   StatusEquipamento,
   Compra,
 } from '../types';
+import { DEFAULT_LOCALIZACOES } from '../services/equipamentos';
 import { exportarInventarioParaExcel } from '../utils/exportInventarioExcel';
 import { formatDate, formatCurrency } from '../utils/formatters';
+import {
+  extrairQuantidadeEquipamento,
+  atualizarTextoComQuantidade,
+  formatarLogUsoEquipamento,
+} from '../utils/inventarioUtils';
 
 interface InventarioViewProps {
   equipamentos: Equipamento[];
   compras?: Compra[];
   onNovoEquipamento: () => void;
   onEditarEquipamento: (equipamento: Equipamento) => void;
+  onSalvarEquipamento?: (equipamento: EquipamentoInput | Equipamento) => Promise<void>;
   onExcluirEquipamento: (id: string) => Promise<void>;
   onAbrirTermo: (equipamento: Equipamento) => void;
   onAbrirEtiquetas: (equipamento?: Equipamento) => void;
@@ -42,6 +53,7 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
   compras = [],
   onNovoEquipamento,
   onEditarEquipamento,
+  onSalvarEquipamento,
   onExcluirEquipamento,
   onAbrirTermo,
   onAbrirEtiquetas,
@@ -55,6 +67,14 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
   // Modal de exclusão
   const [equipamentoParaExcluir, setEquipamentoParaExcluir] = useState<Equipamento | null>(null);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
+
+  // Modal de Usar 1 unidade / Dar Baixa no Estoque
+  const [equipamentoParaUsar, setEquipamentoParaUsar] = useState<Equipamento | null>(null);
+  const [qtdParaUsar, setQtdParaUsar] = useState<number>(1);
+  const [responsavelUso, setResponsavelUso] = useState<string>('');
+  const [localUso, setLocalUso] = useState<string>('');
+  const [motivoUso, setMotivoUso] = useState<string>('');
+  const [isUsando, setIsUsando] = useState<boolean>(false);
 
   // Mapa de compras para busca rápida por ID
   const comprasMap = useMemo(() => {
@@ -86,16 +106,21 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
     let estoque = 0;
     let manutencao = 0;
     let baixados = 0;
+    let totalUnidades = 0;
 
     equipamentos.forEach((e) => {
-      if (e.status === 'Em Uso') emUso++;
-      else if (e.status === 'Disponível / Estoque') estoque++;
-      else if (e.status === 'Em Manutenção') manutencao++;
-      else if (e.status === 'Baixado / Sucateado') baixados++;
+      const qtd = extrairQuantidadeEquipamento(e);
+      totalUnidades += qtd;
+
+      if (e.status === 'Em Uso') emUso += qtd;
+      else if (e.status === 'Disponível / Estoque') estoque += qtd;
+      else if (e.status === 'Em Manutenção') manutencao += qtd;
+      else if (e.status === 'Baixado / Sucateado') baixados += qtd;
     });
 
     return {
       total: equipamentos.length,
+      totalUnidades,
       emUso,
       estoque,
       manutencao,
@@ -172,6 +197,69 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
     }
   };
 
+  // Abre o modal para usar 1 ou mais unidades
+  const handleAbrirModalUsar = (item: Equipamento) => {
+    setEquipamentoParaUsar(item);
+    setQtdParaUsar(1);
+    setResponsavelUso(item.responsavel || '');
+    setLocalUso(item.localizacao || DEFAULT_LOCALIZACOES[0] || 'CPD / Servidores');
+    setMotivoUso('');
+  };
+
+  // Executa a baixa de uso e registra no histórico de observações
+  const handleConfirmarUso = async (baixaRapida = false) => {
+    if (!equipamentoParaUsar) return;
+
+    const qtdAtual = extrairQuantidadeEquipamento(equipamentoParaUsar);
+    const qtdRetirar = baixaRapida ? 1 : Math.max(1, Math.min(qtdParaUsar, qtdAtual));
+    const novaQtd = Math.max(0, qtdAtual - qtdRetirar);
+
+    setIsUsando(true);
+    try {
+      const novosSpecs = atualizarTextoComQuantidade(equipamentoParaUsar.especificacoes, novaQtd);
+      const novoHistorico = formatarLogUsoEquipamento(
+        equipamentoParaUsar.observacoes,
+        qtdRetirar,
+        novaQtd,
+        baixaRapida ? 'Equipe T.I (Baixa Rápida)' : responsavelUso,
+        baixaRapida ? equipamentoParaUsar.localizacao : localUso,
+        baixaRapida ? 'Uso rotineiro imediato' : motivoUso
+      );
+
+      let novoStatus = equipamentoParaUsar.status;
+      if (novaQtd === 0 && novoStatus === 'Disponível / Estoque') {
+        novoStatus = 'Em Uso';
+      }
+
+      const payloadAtualizado: Equipamento = {
+        ...equipamentoParaUsar,
+        especificacoes: novosSpecs,
+        observacoes: novoHistorico,
+        status: novoStatus,
+        responsavel: baixaRapida
+          ? equipamentoParaUsar.responsavel
+          : responsavelUso.trim() || equipamentoParaUsar.responsavel,
+        localizacao: baixaRapida
+          ? equipamentoParaUsar.localizacao
+          : localUso.trim() || equipamentoParaUsar.localizacao,
+      };
+
+      if (onSalvarEquipamento) {
+        await onSalvarEquipamento(payloadAtualizado);
+      }
+
+      toast.success(
+        `✅ ${qtdRetirar} unidade de ${equipamentoParaUsar.marca} ${equipamentoParaUsar.modelo} utilizada! Novo saldo: ${novaQtd} un.`
+      );
+      setEquipamentoParaUsar(null);
+    } catch (err: any) {
+      console.error('Erro ao registrar uso do equipamento:', err);
+      toast.error(err.message || 'Falha ao registrar uso do item.');
+    } finally {
+      setIsUsando(false);
+    }
+  };
+
   const renderStatusBadge = (status: StatusEquipamento) => {
     switch (status) {
       case 'Em Uso':
@@ -220,10 +308,11 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
                 Total no Inventário
               </p>
               <h3 className="text-2xl sm:text-3xl font-black text-slate-900 mt-1 font-mono">
-                {stats.total}
+                {stats.total} <span className="text-xs font-semibold text-slate-400 font-sans">itens</span>
               </h3>
-              <p className="text-xs text-slate-400 mt-1 flex items-center gap-1">
-                <span>Itens cadastrados</span>
+              <p className="text-xs text-indigo-700 mt-1 font-semibold flex items-center gap-1">
+                <Boxes className="w-3.5 h-3.5" />
+                <span>{stats.totalUnidades} unidades no total</span>
               </p>
             </div>
             <div className="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shadow-xs">
@@ -241,7 +330,7 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
                 Em Uso / Alocados
               </p>
               <h3 className="text-2xl sm:text-3xl font-black text-emerald-600 mt-1 font-mono">
-                {stats.emUso}
+                {stats.emUso} <span className="text-xs font-semibold text-emerald-400 font-sans">un</span>
               </h3>
               <p className="text-xs text-slate-400 mt-1">
                 Com colaboradores ou salas
@@ -262,10 +351,10 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
                 Disponíveis no Estoque
               </p>
               <h3 className="text-2xl sm:text-3xl font-black text-blue-600 mt-1 font-mono">
-                {stats.estoque}
+                {stats.estoque} <span className="text-xs font-semibold text-blue-400 font-sans">un</span>
               </h3>
               <p className="text-xs text-slate-400 mt-1">
-                Prontos para empréstimo
+                Prontos para empréstimo / uso
               </p>
             </div>
             <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shadow-xs">
@@ -415,6 +504,7 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
                 <th className="py-3 px-4">Patrimônio</th>
                 <th className="py-3 px-4">Tipo</th>
                 <th className="py-3 px-4">Marca & Modelo</th>
+                <th className="py-3 px-4 text-center">Qtd / Estoque</th>
                 <th className="py-3 px-4">Nº de Série (S/N)</th>
                 <th className="py-3 px-4">Localização</th>
                 <th className="py-3 px-4">Responsável</th>
@@ -425,7 +515,7 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
             <tbody className="divide-y divide-slate-100 text-slate-700">
               {equipamentosFiltrados.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center text-slate-400">
+                  <td colSpan={9} className="py-12 text-center text-slate-400">
                     <Laptop className="w-10 h-10 mx-auto mb-2 opacity-40" />
                     <p className="text-sm font-semibold text-slate-600">
                       Nenhum equipamento encontrado
@@ -501,6 +591,41 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
                                 <ExternalLink className="w-2.5 h-2.5" />
                               </a>
                             )}
+                          </div>
+                        );
+                      })()}
+                    </td>
+
+                    {/* Qtd / Estoque com Botão Usar 1 */}
+                    <td className="py-3.5 px-4 text-center">
+                      {(() => {
+                        const qtdAtual = extrairQuantidadeEquipamento(item);
+                        return (
+                          <div className="inline-flex items-center gap-2">
+                            <span
+                              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold font-mono ${
+                                qtdAtual > 1
+                                  ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                  : qtdAtual === 1
+                                  ? 'bg-slate-100 text-slate-700 border border-slate-200'
+                                  : 'bg-rose-50 text-rose-700 border border-rose-200'
+                              }`}
+                              title={`${qtdAtual} unidades registradas`}
+                            >
+                              <Boxes className="w-3.5 h-3.5" />
+                              <span>{qtdAtual} {qtdAtual === 1 ? 'un' : 'unidades'}</span>
+                            </span>
+
+                            <button
+                              type="button"
+                              onClick={() => handleAbrirModalUsar(item)}
+                              disabled={qtdAtual <= 0}
+                              className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-bold text-indigo-700 hover:text-white bg-indigo-50 hover:bg-indigo-600 border border-indigo-200 hover:border-indigo-600 rounded-lg transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shadow-xs active:scale-95"
+                              title="Usar 1 unidade deste produto / dar baixa no estoque"
+                            >
+                              <MinusCircle className="w-3.5 h-3.5" />
+                              <span>Usar 1</span>
+                            </button>
                           </div>
                         );
                       })()}
@@ -656,6 +781,172 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
                 {isDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
                 <span>Excluir Definitivamente</span>
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Registro de Uso / Retirada do Estoque */}
+      {equipamentoParaUsar && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4"
+        >
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shadow-xs">
+                  <MinusCircle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    Registrar Uso / Retirada do Estoque
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    {equipamentoParaUsar.patrimonio} • {equipamentoParaUsar.marca} {equipamentoParaUsar.modelo}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEquipamentoParaUsar(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Painel Visual de Saldo */}
+            <div className="p-4 rounded-xl border border-indigo-100 bg-indigo-50/50 flex items-center justify-between mb-4">
+              <div>
+                <span className="text-xs font-semibold text-indigo-950 block">Estoque Atual:</span>
+                <span className="text-xl font-bold font-mono text-indigo-700">
+                  {extrairQuantidadeEquipamento(equipamentoParaUsar)} unidades
+                </span>
+              </div>
+              <div className="text-right">
+                <span className="text-xs font-semibold text-slate-500 block">Novo Saldo Após Uso:</span>
+                <span className="text-xl font-bold font-mono text-emerald-600">
+                  {Math.max(0, extrairQuantidadeEquipamento(equipamentoParaUsar) - qtdParaUsar)} unidades
+                </span>
+              </div>
+            </div>
+
+            {/* Campos de Destino e Responsável */}
+            <div className="space-y-3 mb-5 text-xs text-slate-700">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Quantidade a retirar:
+                </label>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setQtdParaUsar((prev) => Math.max(1, prev - 1))}
+                    disabled={qtdParaUsar <= 1}
+                    className="w-8 h-8 rounded-lg border border-slate-300 bg-white font-bold flex items-center justify-center hover:bg-slate-50 disabled:opacity-40 cursor-pointer"
+                  >
+                    -
+                  </button>
+                  <span className="w-12 text-center font-mono font-bold text-sm text-indigo-700">
+                    {qtdParaUsar}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setQtdParaUsar((prev) =>
+                        Math.min(extrairQuantidadeEquipamento(equipamentoParaUsar), prev + 1)
+                      )
+                    }
+                    disabled={qtdParaUsar >= extrairQuantidadeEquipamento(equipamentoParaUsar)}
+                    className="w-8 h-8 rounded-lg border border-slate-300 bg-white font-bold flex items-center justify-center hover:bg-slate-50 disabled:opacity-40 cursor-pointer"
+                  >
+                    +
+                  </button>
+                  <span className="text-slate-400 text-[11px] ml-2">unidade(s)</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Quem está utilizando / retirando?
+                </label>
+                <input
+                  type="text"
+                  value={responsavelUso}
+                  onChange={(e) => setResponsavelUso(e.target.value)}
+                  placeholder="Ex: Nome do Colaborador, Professor, Coordenação..."
+                  className="w-full h-9 px-3 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Localização / Sala de Destino:
+                </label>
+                <input
+                  type="text"
+                  list="loc-uso-list"
+                  value={localUso}
+                  onChange={(e) => setLocalUso(e.target.value)}
+                  placeholder="Ex: Secretaria, Recepção, Laboratório..."
+                  className="w-full h-9 px-3 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+                <datalist id="loc-uso-list">
+                  {DEFAULT_LOCALIZACOES.map((l) => (
+                    <option key={l} value={l} />
+                  ))}
+                </datalist>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Motivo / Observação (Opcional):
+                </label>
+                <input
+                  type="text"
+                  value={motivoUso}
+                  onChange={(e) => setMotivoUso(e.target.value)}
+                  placeholder="Ex: Substituição de cabo danificado, instalação em PC..."
+                  className="w-full h-9 px-3 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+              </div>
+            </div>
+
+            {/* Ações */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => handleConfirmarUso(true)}
+                disabled={isUsando}
+                className="w-full sm:w-auto px-3 py-2 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-xl transition-all cursor-pointer disabled:opacity-50"
+              >
+                ⚡ Baixa Rápida (-1 un)
+              </button>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                <button
+                  type="button"
+                  onClick={() => setEquipamentoParaUsar(null)}
+                  disabled={isUsando}
+                  className="px-3.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-all cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleConfirmarUso(false)}
+                  disabled={isUsando}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {isUsando ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <MinusCircle className="w-3.5 h-3.5" />
+                  )}
+                  <span>Confirmar Retirada (-{qtdParaUsar} un)</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

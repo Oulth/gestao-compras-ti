@@ -320,6 +320,7 @@ export default function App() {
             compras={compras}
             onNovoEquipamento={handleNovoEquipamento}
             onEditarEquipamento={handleEditarEquipamento}
+            onSalvarEquipamento={handleSalvarEquipamento}
             onExcluirEquipamento={handleExcluirEquipamento}
             onAbrirTermo={handleAbrirTermo}
             onAbrirEtiquetas={handleAbrirEtiquetas}
