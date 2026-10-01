@@ -20,6 +20,7 @@ import {
   ExternalLink,
   Boxes,
   MinusCircle,
+  PlusCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
@@ -35,6 +36,7 @@ import {
   extrairQuantidadeEquipamento,
   atualizarTextoComQuantidade,
   formatarLogUsoEquipamento,
+  formatarLogEntradaEquipamento,
 } from '../utils/inventarioUtils';
 
 interface InventarioViewProps {
@@ -68,13 +70,14 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
   const [equipamentoParaExcluir, setEquipamentoParaExcluir] = useState<Equipamento | null>(null);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
 
-  // Modal de Usar 1 unidade / Dar Baixa no Estoque
-  const [equipamentoParaUsar, setEquipamentoParaUsar] = useState<Equipamento | null>(null);
-  const [qtdParaUsar, setQtdParaUsar] = useState<number>(1);
-  const [responsavelUso, setResponsavelUso] = useState<string>('');
-  const [localUso, setLocalUso] = useState<string>('');
-  const [motivoUso, setMotivoUso] = useState<string>('');
-  const [isUsando, setIsUsando] = useState<boolean>(false);
+  // Modal de Ajuste de Estoque (Usar / Adicionar Unidades)
+  const [equipamentoParaAjuste, setEquipamentoParaAjuste] = useState<Equipamento | null>(null);
+  const [tipoAjuste, setTipoAjuste] = useState<'retirar' | 'adicionar'>('retirar');
+  const [qtdAjuste, setQtdAjuste] = useState<number>(1);
+  const [responsavelAjuste, setResponsavelAjuste] = useState<string>('');
+  const [localAjuste, setLocalAjuste] = useState<string>('');
+  const [motivoAjuste, setMotivoAjuste] = useState<string>('');
+  const [isSalvandoAjuste, setIsSalvandoAjuste] = useState<boolean>(false);
 
   // Mapa de compras para busca rápida por ID
   const comprasMap = useMemo(() => {
@@ -197,66 +200,96 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
     }
   };
 
-  // Abre o modal para usar 1 ou mais unidades
-  const handleAbrirModalUsar = (item: Equipamento) => {
-    setEquipamentoParaUsar(item);
-    setQtdParaUsar(1);
-    setResponsavelUso(item.responsavel || '');
-    setLocalUso(item.localizacao || DEFAULT_LOCALIZACOES[0] || 'CPD / Servidores');
-    setMotivoUso('');
+  // Abre o modal de ajuste de estoque (retirar ou adicionar)
+  const handleAbrirModalAjuste = (item: Equipamento, tipo: 'retirar' | 'adicionar' = 'retirar') => {
+    setEquipamentoParaAjuste(item);
+    setTipoAjuste(tipo);
+    setQtdAjuste(1);
+    setResponsavelAjuste(item.responsavel || '');
+    setLocalAjuste(item.localizacao || DEFAULT_LOCALIZACOES[0] || 'CPD / Servidores');
+    setMotivoAjuste('');
   };
 
-  // Executa a baixa de uso e registra no histórico de observações
-  const handleConfirmarUso = async (baixaRapida = false) => {
-    if (!equipamentoParaUsar) return;
+  // Executa o ajuste de estoque (retirada ou entrada)
+  const handleConfirmarAjuste = async (rapido = false) => {
+    if (!equipamentoParaAjuste) return;
 
-    const qtdAtual = extrairQuantidadeEquipamento(equipamentoParaUsar);
-    const qtdRetirar = baixaRapida ? 1 : Math.max(1, Math.min(qtdParaUsar, qtdAtual));
-    const novaQtd = Math.max(0, qtdAtual - qtdRetirar);
+    const qtdAtual = extrairQuantidadeEquipamento(equipamentoParaAjuste);
+    const qtdOperacao = rapido ? 1 : Math.max(1, qtdAjuste);
 
-    setIsUsando(true);
+    setIsSalvandoAjuste(true);
     try {
-      const novosSpecs = atualizarTextoComQuantidade(equipamentoParaUsar.especificacoes, novaQtd);
-      const novoHistorico = formatarLogUsoEquipamento(
-        equipamentoParaUsar.observacoes,
-        qtdRetirar,
-        novaQtd,
-        baixaRapida ? 'Equipe T.I (Baixa Rápida)' : responsavelUso,
-        baixaRapida ? equipamentoParaUsar.localizacao : localUso,
-        baixaRapida ? 'Uso rotineiro imediato' : motivoUso
-      );
+      let novaQtd = qtdAtual;
+      let novoHistorico = equipamentoParaAjuste.observacoes;
+      let novoStatus = equipamentoParaAjuste.status;
 
-      let novoStatus = equipamentoParaUsar.status;
-      if (novaQtd === 0 && novoStatus === 'Disponível / Estoque') {
-        novoStatus = 'Em Uso';
+      if (tipoAjuste === 'retirar') {
+        const qtdRetirar = Math.min(qtdOperacao, qtdAtual);
+        novaQtd = Math.max(0, qtdAtual - qtdRetirar);
+        novoHistorico = formatarLogUsoEquipamento(
+          equipamentoParaAjuste.observacoes,
+          qtdRetirar,
+          novaQtd,
+          rapido ? 'Equipe T.I (Baixa Rápida)' : responsavelAjuste,
+          rapido ? equipamentoParaAjuste.localizacao : localAjuste,
+          rapido ? 'Uso rotineiro imediato' : motivoAjuste
+        );
+
+        if (novaQtd === 0 && novoStatus === 'Disponível / Estoque') {
+          novoStatus = 'Em Uso';
+        }
+      } else {
+        // 'adicionar'
+        novaQtd = qtdAtual + qtdOperacao;
+        novoHistorico = formatarLogEntradaEquipamento(
+          equipamentoParaAjuste.observacoes,
+          qtdOperacao,
+          novaQtd,
+          rapido ? 'Equipe T.I (Entrada Rápida)' : responsavelAjuste,
+          rapido ? 'Reposição rápida de estoque' : motivoAjuste
+        );
+
+        // Se estava zerado ou baixado, reativa como Disponível / Estoque
+        if (qtdAtual === 0 || novoStatus === 'Baixado / Sucateado') {
+          novoStatus = 'Disponível / Estoque';
+        }
       }
 
+      const novosSpecs = atualizarTextoComQuantidade(equipamentoParaAjuste.especificacoes, novaQtd);
+
       const payloadAtualizado: Equipamento = {
-        ...equipamentoParaUsar,
+        ...equipamentoParaAjuste,
         especificacoes: novosSpecs,
         observacoes: novoHistorico,
         status: novoStatus,
-        responsavel: baixaRapida
-          ? equipamentoParaUsar.responsavel
-          : responsavelUso.trim() || equipamentoParaUsar.responsavel,
-        localizacao: baixaRapida
-          ? equipamentoParaUsar.localizacao
-          : localUso.trim() || equipamentoParaUsar.localizacao,
+        responsavel: rapido
+          ? equipamentoParaAjuste.responsavel
+          : responsavelAjuste.trim() || equipamentoParaAjuste.responsavel,
+        localizacao: rapido
+          ? equipamentoParaAjuste.localizacao
+          : localAjuste.trim() || equipamentoParaAjuste.localizacao,
       };
 
       if (onSalvarEquipamento) {
         await onSalvarEquipamento(payloadAtualizado);
       }
 
-      toast.success(
-        `✅ ${qtdRetirar} unidade de ${equipamentoParaUsar.marca} ${equipamentoParaUsar.modelo} utilizada! Novo saldo: ${novaQtd} un.`
-      );
-      setEquipamentoParaUsar(null);
+      if (tipoAjuste === 'retirar') {
+        toast.success(
+          `✅ ${qtdOperacao} un de ${equipamentoParaAjuste.marca} ${equipamentoParaAjuste.modelo} utilizada. Novo saldo: ${novaQtd} un.`
+        );
+      } else {
+        toast.success(
+          `✅ +${qtdOperacao} un adicionada ao estoque de ${equipamentoParaAjuste.marca} ${equipamentoParaAjuste.modelo}! Novo saldo: ${novaQtd} un.`
+        );
+      }
+
+      setEquipamentoParaAjuste(null);
     } catch (err: any) {
-      console.error('Erro ao registrar uso do equipamento:', err);
-      toast.error(err.message || 'Falha ao registrar uso do item.');
+      console.error('Erro ao registrar ajuste de estoque:', err);
+      toast.error(err.message || 'Falha ao atualizar estoque do item.');
     } finally {
-      setIsUsando(false);
+      setIsSalvandoAjuste(false);
     }
   };
 
@@ -596,12 +629,12 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
                       })()}
                     </td>
 
-                    {/* Qtd / Estoque com Botão Usar 1 */}
+                    {/* Qtd / Estoque com Botões Usar 1 e +1 un */}
                     <td className="py-3.5 px-4 text-center">
                       {(() => {
                         const qtdAtual = extrairQuantidadeEquipamento(item);
                         return (
-                          <div className="inline-flex items-center gap-2">
+                          <div className="inline-flex items-center gap-1.5 flex-wrap justify-center">
                             <span
                               className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold font-mono ${
                                 qtdAtual > 1
@@ -616,16 +649,28 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
                               <span>{qtdAtual} {qtdAtual === 1 ? 'un' : 'unidades'}</span>
                             </span>
 
-                            <button
-                              type="button"
-                              onClick={() => handleAbrirModalUsar(item)}
-                              disabled={qtdAtual <= 0}
-                              className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-bold text-indigo-700 hover:text-white bg-indigo-50 hover:bg-indigo-600 border border-indigo-200 hover:border-indigo-600 rounded-lg transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shadow-xs active:scale-95"
-                              title="Usar 1 unidade deste produto / dar baixa no estoque"
-                            >
-                              <MinusCircle className="w-3.5 h-3.5" />
-                              <span>Usar 1</span>
-                            </button>
+                            <div className="inline-flex items-center rounded-lg border border-slate-200 bg-white shadow-xs p-0.5">
+                              <button
+                                type="button"
+                                onClick={() => handleAbrirModalAjuste(item, 'retirar')}
+                                disabled={qtdAtual <= 0}
+                                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-bold text-rose-700 hover:text-white hover:bg-rose-600 rounded transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                                title="Usar 1 unidade / registrar saída do estoque"
+                              >
+                                <MinusCircle className="w-3.5 h-3.5" />
+                                <span>Usar 1</span>
+                              </button>
+                              <span className="w-px h-3.5 bg-slate-200 mx-0.5" />
+                              <button
+                                type="button"
+                                onClick={() => handleAbrirModalAjuste(item, 'adicionar')}
+                                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-bold text-emerald-700 hover:text-white hover:bg-emerald-600 rounded transition-all cursor-pointer"
+                                title="Aumentar / adicionar unidades ao estoque"
+                              >
+                                <PlusCircle className="w-3.5 h-3.5" />
+                                <span>+1 un</span>
+                              </button>
+                            </div>
                           </div>
                         );
                       })()}
@@ -786,128 +831,227 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
         </div>
       )}
 
-      {/* Modal de Registro de Uso / Retirada do Estoque */}
-      {equipamentoParaUsar && (
+      {/* Modal de Ajuste de Estoque (Usar / Adicionar Unidades) */}
+      {equipamentoParaAjuste && (
         <div
           role="dialog"
           aria-modal="true"
           className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4"
         >
           <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-4">
+            {/* Cabeçalho */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shadow-xs">
-                  <MinusCircle className="w-5 h-5" />
+                <div
+                  className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-xs ${
+                    tipoAjuste === 'retirar'
+                      ? 'bg-rose-50 text-rose-600'
+                      : 'bg-emerald-50 text-emerald-600'
+                  }`}
+                >
+                  {tipoAjuste === 'retirar' ? (
+                    <MinusCircle className="w-5 h-5" />
+                  ) : (
+                    <PlusCircle className="w-5 h-5" />
+                  )}
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-slate-900">
-                    Registrar Uso / Retirada do Estoque
+                    {tipoAjuste === 'retirar'
+                      ? 'Registrar Uso / Retirada do Estoque'
+                      : 'Adicionar Unidades ao Estoque'}
                   </h3>
                   <p className="text-xs text-slate-500">
-                    {equipamentoParaUsar.patrimonio} • {equipamentoParaUsar.marca} {equipamentoParaUsar.modelo}
+                    {equipamentoParaAjuste.patrimonio} • {equipamentoParaAjuste.marca} {equipamentoParaAjuste.modelo}
                   </p>
                 </div>
               </div>
               <button
                 type="button"
-                onClick={() => setEquipamentoParaUsar(null)}
-                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors"
+                onClick={() => setEquipamentoParaAjuste(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {/* Painel Visual de Saldo */}
-            <div className="p-4 rounded-xl border border-indigo-100 bg-indigo-50/50 flex items-center justify-between mb-4">
-              <div>
-                <span className="text-xs font-semibold text-indigo-950 block">Estoque Atual:</span>
-                <span className="text-xl font-bold font-mono text-indigo-700">
-                  {extrairQuantidadeEquipamento(equipamentoParaUsar)} unidades
-                </span>
-              </div>
-              <div className="text-right">
-                <span className="text-xs font-semibold text-slate-500 block">Novo Saldo Após Uso:</span>
-                <span className="text-xl font-bold font-mono text-emerald-600">
-                  {Math.max(0, extrairQuantidadeEquipamento(equipamentoParaUsar) - qtdParaUsar)} unidades
-                </span>
-              </div>
+            {/* Alternador de Modo: Retirar vs Adicionar */}
+            <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-xl mb-4 text-xs font-bold">
+              <button
+                type="button"
+                onClick={() => setTipoAjuste('retirar')}
+                className={`flex items-center justify-center gap-1.5 py-2 rounded-lg transition-all cursor-pointer ${
+                  tipoAjuste === 'retirar'
+                    ? 'bg-white text-rose-700 shadow-xs border border-rose-200'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <MinusCircle className="w-4 h-4" />
+                <span>Usar / Retirar (-)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setTipoAjuste('adicionar')}
+                className={`flex items-center justify-center gap-1.5 py-2 rounded-lg transition-all cursor-pointer ${
+                  tipoAjuste === 'adicionar'
+                    ? 'bg-white text-emerald-700 shadow-xs border border-emerald-200'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <PlusCircle className="w-4 h-4" />
+                <span>Adicionar ao Estoque (+)</span>
+              </button>
             </div>
 
-            {/* Campos de Destino e Responsável */}
+            {/* Painel Visual de Saldo */}
+            {(() => {
+              const qtdAtual = extrairQuantidadeEquipamento(equipamentoParaAjuste);
+              const novoSaldo =
+                tipoAjuste === 'retirar'
+                  ? Math.max(0, qtdAtual - qtdAjuste)
+                  : qtdAtual + qtdAjuste;
+
+              return (
+                <div
+                  className={`p-3.5 rounded-xl border flex items-center justify-between mb-4 ${
+                    tipoAjuste === 'retirar'
+                      ? 'border-rose-100 bg-rose-50/40'
+                      : 'border-emerald-100 bg-emerald-50/40'
+                  }`}
+                >
+                  <div>
+                    <span className="text-xs font-semibold text-slate-600 block">Estoque Atual:</span>
+                    <span className="text-xl font-bold font-mono text-slate-800">
+                      {qtdAtual} {qtdAtual === 1 ? 'unidade' : 'unidades'}
+                    </span>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-xs font-semibold text-slate-600 block">
+                      {tipoAjuste === 'retirar' ? 'Novo Saldo Após Saída:' : 'Novo Saldo Após Entrada:'}
+                    </span>
+                    <span
+                      className={`text-xl font-bold font-mono ${
+                        tipoAjuste === 'retirar' ? 'text-amber-700' : 'text-emerald-700'
+                      }`}
+                    >
+                      {novoSaldo} {novoSaldo === 1 ? 'unidade' : 'unidades'}
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Formulário com Campos */}
             <div className="space-y-3 mb-5 text-xs text-slate-700">
+              {/* Quantidade */}
               <div>
                 <label className="block font-bold text-slate-700 mb-1">
-                  Quantidade a retirar:
+                  {tipoAjuste === 'retirar' ? 'Quantidade a retirar:' : 'Quantidade a adicionar:'}
                 </label>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => setQtdParaUsar((prev) => Math.max(1, prev - 1))}
-                    disabled={qtdParaUsar <= 1}
-                    className="w-8 h-8 rounded-lg border border-slate-300 bg-white font-bold flex items-center justify-center hover:bg-slate-50 disabled:opacity-40 cursor-pointer"
+                    onClick={() => setQtdAjuste((prev) => Math.max(1, prev - 1))}
+                    disabled={qtdAjuste <= 1}
+                    className="w-9 h-9 rounded-lg border border-slate-300 bg-white font-bold text-slate-700 flex items-center justify-center hover:bg-slate-50 disabled:opacity-40 cursor-pointer text-base"
                   >
                     -
                   </button>
-                  <span className="w-12 text-center font-mono font-bold text-sm text-indigo-700">
-                    {qtdParaUsar}
-                  </span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={tipoAjuste === 'retirar' ? extrairQuantidadeEquipamento(equipamentoParaAjuste) : 9999}
+                    value={qtdAjuste}
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value, 10);
+                      if (isNaN(v)) setQtdAjuste(1);
+                      else if (tipoAjuste === 'retirar') {
+                        setQtdAjuste(Math.max(1, Math.min(extrairQuantidadeEquipamento(equipamentoParaAjuste), v)));
+                      } else {
+                        setQtdAjuste(Math.max(1, v));
+                      }
+                    }}
+                    className="w-16 h-9 text-center font-mono font-bold text-base text-slate-900 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white"
+                  />
                   <button
                     type="button"
-                    onClick={() =>
-                      setQtdParaUsar((prev) =>
-                        Math.min(extrairQuantidadeEquipamento(equipamentoParaUsar), prev + 1)
-                      )
+                    onClick={() => {
+                      if (tipoAjuste === 'retirar') {
+                        setQtdAjuste((prev) =>
+                          Math.min(extrairQuantidadeEquipamento(equipamentoParaAjuste), prev + 1)
+                        );
+                      } else {
+                        setQtdAjuste((prev) => prev + 1);
+                      }
+                    }}
+                    disabled={
+                      tipoAjuste === 'retirar' &&
+                      qtdAjuste >= extrairQuantidadeEquipamento(equipamentoParaAjuste)
                     }
-                    disabled={qtdParaUsar >= extrairQuantidadeEquipamento(equipamentoParaUsar)}
-                    className="w-8 h-8 rounded-lg border border-slate-300 bg-white font-bold flex items-center justify-center hover:bg-slate-50 disabled:opacity-40 cursor-pointer"
+                    className="w-9 h-9 rounded-lg border border-slate-300 bg-white font-bold text-slate-700 flex items-center justify-center hover:bg-slate-50 disabled:opacity-40 cursor-pointer text-base"
                   >
                     +
                   </button>
-                  <span className="text-slate-400 text-[11px] ml-2">unidade(s)</span>
+                  <span className="text-slate-400 text-xs ml-1">unidade(s)</span>
                 </div>
               </div>
 
+              {/* Responsável ou Origem */}
               <div>
                 <label className="block font-bold text-slate-700 mb-1">
-                  Quem está utilizando / retirando?
+                  {tipoAjuste === 'retirar'
+                    ? 'Quem está utilizando / retirando?'
+                    : 'Origem / Responsável pela entrada:'}
                 </label>
                 <input
                   type="text"
-                  value={responsavelUso}
-                  onChange={(e) => setResponsavelUso(e.target.value)}
-                  placeholder="Ex: Nome do Colaborador, Professor, Coordenação..."
+                  value={responsavelAjuste}
+                  onChange={(e) => setResponsavelAjuste(e.target.value)}
+                  placeholder={
+                    tipoAjuste === 'retirar'
+                      ? 'Ex: Nome do Colaborador, Professor, Coordenação...'
+                      : 'Ex: Compra avulsa, Devolução de colaborador, Reposição Almoxarifado...'
+                  }
                   className="w-full h-9 px-3 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
                 />
               </div>
 
+              {/* Localização / Sala */}
               <div>
                 <label className="block font-bold text-slate-700 mb-1">
-                  Localização / Sala de Destino:
+                  {tipoAjuste === 'retirar'
+                    ? 'Localização / Sala de Destino:'
+                    : 'Localização de Armazenamento no Estoque:'}
                 </label>
                 <input
                   type="text"
-                  list="loc-uso-list"
-                  value={localUso}
-                  onChange={(e) => setLocalUso(e.target.value)}
-                  placeholder="Ex: Secretaria, Recepção, Laboratório..."
+                  list="loc-ajuste-list"
+                  value={localAjuste}
+                  onChange={(e) => setLocalAjuste(e.target.value)}
+                  placeholder="Ex: Almoxarifado T.I, Sala dos Servidores, Secretaria..."
                   className="w-full h-9 px-3 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
                 />
-                <datalist id="loc-uso-list">
+                <datalist id="loc-ajuste-list">
                   {DEFAULT_LOCALIZACOES.map((l) => (
                     <option key={l} value={l} />
                   ))}
                 </datalist>
               </div>
 
+              {/* Motivo */}
               <div>
                 <label className="block font-bold text-slate-700 mb-1">
                   Motivo / Observação (Opcional):
                 </label>
                 <input
                   type="text"
-                  value={motivoUso}
-                  onChange={(e) => setMotivoUso(e.target.value)}
-                  placeholder="Ex: Substituição de cabo danificado, instalação em PC..."
+                  value={motivoAjuste}
+                  onChange={(e) => setMotivoAjuste(e.target.value)}
+                  placeholder={
+                    tipoAjuste === 'retirar'
+                      ? 'Ex: Substituição de periférico danificado, instalação em PC...'
+                      : 'Ex: Lote adicional recebido, devolução de equipamento...'
+                  }
                   className="w-full h-9 px-3 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
                 />
               </div>
@@ -917,34 +1061,48 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
             <div className="flex flex-col sm:flex-row items-center justify-between gap-2 pt-3 border-t border-slate-100">
               <button
                 type="button"
-                onClick={() => handleConfirmarUso(true)}
-                disabled={isUsando}
-                className="w-full sm:w-auto px-3 py-2 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-xl transition-all cursor-pointer disabled:opacity-50"
+                onClick={() => handleConfirmarAjuste(true)}
+                disabled={isSalvandoAjuste || (tipoAjuste === 'retirar' && extrairQuantidadeEquipamento(equipamentoParaAjuste) <= 0)}
+                className={`w-full sm:w-auto px-3 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer disabled:opacity-40 ${
+                  tipoAjuste === 'retirar'
+                    ? 'text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200'
+                    : 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200'
+                }`}
               >
-                ⚡ Baixa Rápida (-1 un)
+                {tipoAjuste === 'retirar' ? '⚡ Baixa Rápida (-1 un)' : '⚡ Entrada Rápida (+1 un)'}
               </button>
 
               <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
                 <button
                   type="button"
-                  onClick={() => setEquipamentoParaUsar(null)}
-                  disabled={isUsando}
+                  onClick={() => setEquipamentoParaAjuste(null)}
+                  disabled={isSalvandoAjuste}
                   className="px-3.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-all cursor-pointer"
                 >
                   Cancelar
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleConfirmarUso(false)}
-                  disabled={isUsando}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer disabled:opacity-50"
+                  onClick={() => handleConfirmarAjuste(false)}
+                  disabled={isSalvandoAjuste || (tipoAjuste === 'retirar' && extrairQuantidadeEquipamento(equipamentoParaAjuste) <= 0)}
+                  className={`inline-flex items-center gap-1.5 px-4 py-2 text-white text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer disabled:opacity-40 ${
+                    tipoAjuste === 'retirar'
+                      ? 'bg-rose-600 hover:bg-rose-700'
+                      : 'bg-emerald-600 hover:bg-emerald-700'
+                  }`}
                 >
-                  {isUsando ? (
+                  {isSalvandoAjuste ? (
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
+                  ) : tipoAjuste === 'retirar' ? (
                     <MinusCircle className="w-3.5 h-3.5" />
+                  ) : (
+                    <PlusCircle className="w-3.5 h-3.5" />
                   )}
-                  <span>Confirmar Retirada (-{qtdParaUsar} un)</span>
+                  <span>
+                    {tipoAjuste === 'retirar'
+                      ? `Confirmar Retirada (-${qtdAjuste} un)`
+                      : `Confirmar Entrada (+${qtdAjuste} un)`}
+                  </span>
                 </button>
               </div>
             </div>

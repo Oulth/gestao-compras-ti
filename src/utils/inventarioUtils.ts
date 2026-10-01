@@ -86,3 +86,27 @@ export function formatarLogUsoEquipamento(
   const base = (observacoesAtuais || '').trim();
   return base ? `${base}\n${linhaLog}` : linhaLog;
 }
+
+/**
+ * Gera um registro de log de entrada/acréscimo de estoque para ser anexado no campo observações
+ */
+export function formatarLogEntradaEquipamento(
+  observacoesAtuais: string | null | undefined,
+  qtdAdicionada: number,
+  novaQtdTotal: number,
+  origem?: string,
+  motivo?: string
+): string {
+  const agora = new Date();
+  const dataFormatada = agora.toLocaleDateString('pt-BR');
+  const horaFormatada = agora.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
+  const ori = origem?.trim() ? ` (Origem/Responsável: ${origem.trim()})` : '';
+  const mot = motivo?.trim() ? ` • Motivo: ${motivo.trim()}` : '';
+
+  const linhaLog = `[${dataFormatada} ${horaFormatada}] +${qtdAdicionada} un adicionada ao estoque${ori}${mot}. Novo saldo: ${novaQtdTotal} un.`;
+
+  const base = (observacoesAtuais || '').trim();
+  return base ? `${base}\n${linhaLog}` : linhaLog;
+}
+
