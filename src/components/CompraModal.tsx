@@ -17,6 +17,7 @@ import {
   CreditCard,
   Banknote,
   CalendarDays,
+  Info,
   AlertTriangle,
   KeyRound,
   PenLine,
@@ -288,42 +289,43 @@ export const CompraModal: React.FC<CompraModalProps> = ({
     setAdicionarAoInventario(false);
   }, [isOpen, compraEmEdicao]);
 
-  // Decodifica Chave de Acesso de 44 dígitos da NF-e ou número da NF
+  // Decodifica Chave de Acesso (NF-e 44 dígitos ou NFS-e 50 dígitos), Boleto ou Número da NF
   const handleDecodificarChave = () => {
     const limpa = chaveNfeInput.replace(/\D/g, '');
     if (!limpa) {
-      toast.error('Informe a Chave de Acesso (44 dígitos) ou o Número da Nota Fiscal.');
+      toast.error('Informe a Chave de Acesso (NF-e ou NFS-e), Linha do Boleto ou o Número da Nota.');
       return;
     }
 
-    // Se for Chave de Acesso completa da NF-e (44 dígitos)
-    if (limpa.length === 44) {
-      const decodificada = decodificarChaveNfe(limpa);
-      if (decodificada) {
-        setCodigoTi(decodificada.codigoTi);
+    const decodificada = decodificarChaveNfe(limpa);
+    if (decodificada && decodificada.valida) {
+      if (decodificada.codigoTi) setCodigoTi(decodificada.codigoTi);
+      if (decodificada.cnpj) {
         setCnpj(decodificada.cnpj);
-        if (!dataCompra) {
-          setDataCompra(decodificada.dataCompraSugerida);
-        }
-        setTipo('Produto');
         realizarBuscaCnpj(decodificada.cnpj);
-        toast.success(
-          `Chave decodificada: NF Nº ${decodificada.numeroNf} (${decodificada.ufSigla}). Buscando dados na Receita Federal...`
-        );
-        setEtapaAtual(2);
-        return;
       }
-    }
+      if (decodificada.tipoDespesaSugerido) {
+        setTipo(decodificada.tipoDespesaSugerido);
+      }
+      if (decodificada.categoriaSugerida && (!categoria || categoria === config.categorias[0])) {
+        setCategoria(decodificada.categoriaSugerida);
+      }
+      if (decodificada.dataCompraSugerida && !dataCompra) {
+        setDataCompra(decodificada.dataCompraSugerida);
+      }
+      if (decodificada.valorSugerido) {
+        setValor(decodificada.valorSugerido);
+      }
+      if (decodificada.descricaoSugerida && !descricao) {
+        setDescricao(decodificada.descricaoSugerida);
+      }
 
-    // Se for apenas o número da NF digitado (ex: 1747050)
-    if (limpa.length >= 1 && limpa.length <= 9) {
-      setCodigoTi(`NF-${limpa}`);
-      toast.info(`Número da nota definido como NF-${limpa}.`);
+      toast.success(decodificada.mensagem);
       setEtapaAtual(2);
       return;
     }
 
-    toast.warning('A chave de acesso da NF-e deve ter 44 dígitos.');
+    toast.warning('Formato não reconhecido. Digite os 44 dígitos da NF-e, 50 dígitos da NFS-e Nacional ou o número da nota.');
   };
 
   // Aplica máscara de CNPJ enquanto o usuário digita
@@ -1169,7 +1171,7 @@ export const CompraModal: React.FC<CompraModalProps> = ({
 
                 {/* Opção 2: Chave ou Número */}
                 {modoEntrada === 'chave' && (
-                  <div className="pt-2 p-4 bg-white rounded-xl border border-slate-200/80 space-y-2">
+                  <div className="pt-2 p-4 bg-white rounded-xl border border-slate-200/80 space-y-3">
                     <div className="flex gap-2">
                       <input
                         type="text"
@@ -1181,7 +1183,7 @@ export const CompraModal: React.FC<CompraModalProps> = ({
                             handleDecodificarChave();
                           }
                         }}
-                        placeholder="Cole os 44 dígitos da chave ou o número da NF..."
+                        placeholder="Cole os 44 dígitos da NF-e, 50 dígitos da NFS-e ou número da nota..."
                         className="flex-1 h-10 px-3 text-xs sm:text-sm font-mono rounded-xl border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600"
                       />
                       <button
@@ -1192,9 +1194,20 @@ export const CompraModal: React.FC<CompraModalProps> = ({
                         Preencher e Avançar
                       </button>
                     </div>
-                    <p className="text-[11px] text-slate-500">
-                      Decodifica o número da nota, UF e CNPJ, buscando os dados da empresa na Receita Federal.
-                    </p>
+
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 border-t border-slate-100 text-[11px] text-slate-500">
+                      <span>
+                        Decodifica NF-e (44 dígitos), NFS-e Nacional (50 dígitos) e busca a empresa na Receita Federal.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => xmlInputRef.current?.click()}
+                        className="inline-flex items-center gap-1 font-bold text-blue-600 hover:text-blue-800 transition-colors cursor-pointer shrink-0"
+                      >
+                        <UploadCloud className="w-3.5 h-3.5" />
+                        <span>Carregar PDF/XML para puxar itens e valor</span>
+                      </button>
+                    </div>
                   </div>
                 )}
 
@@ -1256,7 +1269,32 @@ export const CompraModal: React.FC<CompraModalProps> = ({
           {etapaAtual === 2 && (
             <div className="space-y-6 animate-in fade-in duration-200">
 
-          {/* AVISO DE NOTA FISCAL DUPLICADA DETECTADA */}
+              {/* DICA QUANDO INSERE SOMENTE NÚMEROS / CHAVE */}
+              {codigoTi && (!valor || !descricao) && (
+                <div className="p-3.5 bg-blue-50/90 border border-blue-200 rounded-2xl text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+                  <div className="flex items-start gap-2.5">
+                    <Info className="w-4 h-4 text-blue-600 mt-0.5 shrink-0" />
+                    <div>
+                      <p className="font-bold text-slate-800">
+                        {codigoTi} identificado com sucesso
+                      </p>
+                      <p className="text-[11px] text-slate-600 mt-0.5">
+                        As chaves numéricas identificam fornecedor, CNPJ e nota, mas não trazem itens e valores embutidos nos dígitos. Você pode digitar o valor abaixo ou anexar o PDF/XML para preencher tudo automaticamente.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => xmlInputRef.current?.click()}
+                    className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 transition-colors shrink-0 shadow-xs cursor-pointer"
+                  >
+                    <UploadCloud className="w-3.5 h-3.5" />
+                    <span>Anexar PDF / XML da Nota</span>
+                  </button>
+                </div>
+              )}
+
+              {/* AVISO DE NOTA FISCAL DUPLICADA DETECTADA */}
           {duplicidadeAtual.isDuplicada && !ignorarAvisoDuplicidade && (
             <div className="rounded-2xl border-2 border-amber-300 bg-amber-50/95 p-4 shadow-sm animate-in fade-in slide-in-from-top-2">
               <div className="flex items-start gap-3">
