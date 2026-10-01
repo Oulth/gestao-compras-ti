@@ -297,29 +297,56 @@ export const CompraModal: React.FC<CompraModalProps> = ({
       return;
     }
 
-    const decodificada = decodificarChaveNfe(limpa);
+    const decodificada = decodificarChaveNfe(limpa, comprasExistentes);
     if (decodificada && decodificada.valida) {
       if (decodificada.codigoTi) setCodigoTi(decodificada.codigoTi);
+      if (decodificada.fornecedorSugerido) {
+        setFornecedor(decodificada.fornecedorSugerido);
+      }
       if (decodificada.cnpj) {
         setCnpj(decodificada.cnpj);
-        realizarBuscaCnpj(decodificada.cnpj);
+        if (!decodificada.fornecedorSugerido) {
+          realizarBuscaCnpj(decodificada.cnpj);
+        }
       }
       if (decodificada.tipoDespesaSugerido) {
         setTipo(decodificada.tipoDespesaSugerido);
       }
-      if (decodificada.categoriaSugerida && (!categoria || categoria === config.categorias[0])) {
+      if (decodificada.categoriaSugerida) {
         setCategoria(decodificada.categoriaSugerida);
       }
-      if (decodificada.dataCompraSugerida && !dataCompra) {
+      if (decodificada.centroCustoSugerido) {
+        setCentroCusto(decodificada.centroCustoSugerido);
+      }
+      if (decodificada.dataCompraSugerida) {
         setDataCompra(decodificada.dataCompraSugerida);
       }
       if (decodificada.valorSugerido) {
         setValor(decodificada.valorSugerido);
       }
-      if (decodificada.descricaoSugerida && !descricao) {
+      if (decodificada.descricaoSugerida) {
         setDescricao(decodificada.descricaoSugerida);
       }
+      if (decodificada.formaPagamentoSugerida) {
+        setFormaPagamento(decodificada.formaPagamentoSugerida);
+      }
+      if (decodificada.statusPagamentoSugerido) {
+        setStatusPagamento(decodificada.statusPagamentoSugerido);
+      }
+      if (decodificada.observacoesSugeridas) {
+        setObservacoes(decodificada.observacoesSugeridas);
+      }
+      if (decodificada.modalidadeSugerida) {
+        setModalidadePagamento(decodificada.modalidadeSugerida);
+        if (decodificada.modalidadeSugerida === 'parcelado') {
+          setNumParcelas(decodificada.numParcelasSugerido || 2);
+          setStatusPagamento('Parcelado');
+        } else if (decodificada.modalidadeSugerida === 'recorrente_mensal') {
+          setDuracaoRecorrencia('12_meses');
+        }
+      }
 
+      setErrors({});
       toast.success(decodificada.mensagem);
       setEtapaAtual(2);
       return;
