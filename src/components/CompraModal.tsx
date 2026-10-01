@@ -13,7 +13,6 @@ import {
   DollarSign,
   Layers,
   FileCode,
-  Zap,
   Repeat,
   CreditCard,
   Banknote,
@@ -68,6 +67,7 @@ const STATUS_PAGAMENTO: StatusPagamento[] = [
 
 type ModalidadePagamento = 'a_vista' | 'parcelado' | 'recorrente_mensal';
 type DuracaoRecorrencia = 'fim_do_ano' | '12_meses' | '6_meses' | 'personalizado';
+type ModoEntrada = 'arquivo' | 'chave' | 'manual';
 
 /**
  * Adiciona meses a uma data YYYY-MM-DD com segurança contra estouro de dias
@@ -143,6 +143,7 @@ export const CompraModal: React.FC<CompraModalProps> = ({
   const [gerarMensalidadesFuturas, setGerarMensalidadesFuturas] = useState<boolean>(true);
 
   const [chaveNfeInput, setChaveNfeInput] = useState<string>('');
+  const [modoEntrada, setModoEntrada] = useState<ModoEntrada>('arquivo');
 
   // Estados de controle e feedback
   const [isSearchingCnpj, setIsSearchingCnpj] = useState<boolean>(false);
@@ -270,6 +271,7 @@ export const CompraModal: React.FC<CompraModalProps> = ({
       setGerarMensalidadesFuturas(true);
     }
     setChaveNfeInput('');
+    setModoEntrada('arquivo');
     setIgnorarAvisoDuplicidade(false);
     setIsConfirmandoDuplicidadeModal(false);
     setErrors({});
@@ -295,7 +297,7 @@ export const CompraModal: React.FC<CompraModalProps> = ({
         setTipo('Produto');
         realizarBuscaCnpj(decodificada.cnpj);
         toast.success(
-          `✨ Chave decodificada: NF Nº ${decodificada.numeroNf} (${decodificada.ufSigla})! Consultando fornecedor na Receita Federal...`
+          `Chave decodificada: NF Nº ${decodificada.numeroNf} (${decodificada.ufSigla}). Buscando dados na Receita Federal...`
         );
         return;
       }
@@ -304,11 +306,11 @@ export const CompraModal: React.FC<CompraModalProps> = ({
     // Se for apenas o número da NF digitado (ex: 1747050)
     if (limpa.length >= 1 && limpa.length <= 9) {
       setCodigoTi(`NF-${limpa}`);
-      toast.info(`Número da Nota Fiscal definido: NF-${limpa}`);
+      toast.info(`Número da nota definido como NF-${limpa}.`);
       return;
     }
 
-    toast.warning('A chave de acesso oficial da NF-e deve possuir exatamente 44 dígitos numéricos.');
+    toast.warning('A chave de acesso da NF-e deve ter 44 dígitos.');
   };
 
   // Aplica máscara de CNPJ enquanto o usuário digita
@@ -382,7 +384,7 @@ export const CompraModal: React.FC<CompraModalProps> = ({
     }
 
     setErrors({});
-    toast.success(`⚡ Modelo "${modelo.nome}" aplicado com sucesso!`);
+    toast.success(`Modelo "${modelo.nome}" aplicado.`);
   };
 
   // Processa arquivo XML de NF-e
@@ -414,11 +416,11 @@ export const CompraModal: React.FC<CompraModalProps> = ({
       }
 
       if (dadosNfe.dataVencimento) {
-        setObservacoes(`Vencimento do Boleto / Duplicata: ${formatDate(dadosNfe.dataVencimento)}`);
+        setObservacoes(`Vencimento do boleto: ${formatDate(dadosNfe.dataVencimento)}`);
       }
 
       toast.success(
-        `✨ NF-e Nº ${dadosNfe.numeroNf || 'importada'} processada! ${dadosNfe.fornecedor} • ${formatCurrency(Number(dadosNfe.valor) || 0)}`
+        `NF-e Nº ${dadosNfe.numeroNf || 'importada'} processada. ${dadosNfe.fornecedor} (${formatCurrency(Number(dadosNfe.valor) || 0)})`
       );
 
       // Verificação imediata de duplicidade do XML
@@ -552,7 +554,7 @@ export const CompraModal: React.FC<CompraModalProps> = ({
             }
 
             toast.success(
-              `✨ DANFE (NF-e) Nº ${dadosPdf.numeroNf || 'importada'} lido com sucesso! ${dadosPdf.fornecedor} • ${formatCurrency(Number(dadosPdf.valor) || 0)}`
+              `DANFE (NF-e) Nº ${dadosPdf.numeroNf || 'importada'} processada. ${dadosPdf.fornecedor} (${formatCurrency(Number(dadosPdf.valor) || 0)})`
             );
           } else {
             // NFSE_SERVICO
@@ -565,7 +567,7 @@ export const CompraModal: React.FC<CompraModalProps> = ({
             }
             setCategoria('Suporte & Serviços Especializados');
             toast.success(
-              `✨ NFS-e Nº ${dadosPdf.numeroNf || 'importada'} lida com sucesso! ${dadosPdf.fornecedor} • ${formatCurrency(Number(dadosPdf.valor) || 0)}`
+              `NFS-e Nº ${dadosPdf.numeroNf || 'importada'} processada. ${dadosPdf.fornecedor} (${formatCurrency(Number(dadosPdf.valor) || 0)})`
             );
           }
 
@@ -956,136 +958,149 @@ export const CompraModal: React.FC<CompraModalProps> = ({
         {/* Corpo do Formulário com Scroll */}
         <form onSubmit={handleSubmit} className="overflow-y-auto px-6 py-6 space-y-6 flex-1 text-slate-800">
           
-          {/* PAINEL DE ENTRADA COM 3 FORMAS CLARAS DE INICIAR */}
+          {/* PASSO 1: FORMA DE LANÇAMENTO */}
           {!isEditing && (
-            <div className="bg-gradient-to-br from-slate-50 via-blue-50/40 to-indigo-50/30 p-4 sm:p-5 rounded-2xl border border-blue-200/90 shadow-xs space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-blue-200/60">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-xs">
-                    <Zap className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h3 className="text-xs sm:text-sm font-bold text-slate-900 uppercase tracking-wider">
-                      Como você deseja iniciar este cadastro?
-                    </h3>
-                    <p className="text-[11px] text-slate-500 font-medium">
-                      Escolha uma das 3 opções abaixo ou altere qualquer campo manual livremente
-                    </p>
-                  </div>
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 sm:p-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-[11px] font-bold flex items-center justify-center">
+                    1
+                  </span>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                    Passo 1: Como deseja lançar?
+                  </h3>
                 </div>
-
-                <input
-                  ref={xmlInputRef}
-                  type="file"
-                  accept=".xml,application/pdf,text/xml,application/xml"
-                  onChange={(e) => {
-                    if (e.target.files && e.target.files[0]) {
-                      handleUploadFile(e.target.files[0]);
-                    }
-                  }}
-                  className="hidden"
-                />
+                <span className="text-[11px] text-slate-500">Escolha uma opção</span>
               </div>
 
-              {/* Grid com as 3 Opções Visuais */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                {/* OPÇÃO 1: UPLOAD DE ARQUIVO (XML OU PDF) */}
-                <div className="p-3.5 rounded-xl border border-blue-200 bg-white hover:border-blue-400 hover:shadow-xs transition-all flex flex-col justify-between">
-                  <div className="space-y-1 mb-3">
-                    <div className="flex items-center gap-1.5 text-blue-700">
-                      <FileCode className="w-4 h-4" />
-                      <span className="text-[11px] font-bold uppercase tracking-wider">Opção 1 • Arquivo</span>
-                    </div>
-                    <p className="text-xs font-bold text-slate-800">Upload de XML ou PDF</p>
-                    <p className="text-[11px] text-slate-500 leading-snug">
-                      Lê produtos, valores, parcelas e CNPJ sem você precisar digitar nada.
-                    </p>
-                  </div>
+              {/* Seletor Segmentado */}
+              <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-200/70 rounded-xl text-xs">
+                <button
+                  type="button"
+                  onClick={() => setModoEntrada('arquivo')}
+                  className={`py-2 px-2.5 rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer text-xs ${
+                    modoEntrada === 'arquivo'
+                      ? 'bg-white text-blue-700 font-bold shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900 font-medium'
+                  }`}
+                >
+                  <FileCode className="w-4 h-4 shrink-0" />
+                  <span className="truncate">Arquivo (XML / PDF)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setModoEntrada('chave')}
+                  className={`py-2 px-2.5 rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer text-xs ${
+                    modoEntrada === 'chave'
+                      ? 'bg-white text-blue-700 font-bold shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900 font-medium'
+                  }`}
+                >
+                  <KeyRound className="w-4 h-4 shrink-0" />
+                  <span className="truncate">Chave ou Nº da NF</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setModoEntrada('manual')}
+                  className={`py-2 px-2.5 rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer text-xs ${
+                    modoEntrada === 'manual'
+                      ? 'bg-white text-blue-700 font-bold shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900 font-medium'
+                  }`}
+                >
+                  <PenLine className="w-4 h-4 shrink-0" />
+                  <span className="truncate">Manual</span>
+                </button>
+              </div>
+
+              <input
+                ref={xmlInputRef}
+                type="file"
+                accept=".xml,application/pdf,text/xml,application/xml"
+                onChange={(e) => {
+                  if (e.target.files && e.target.files[0]) {
+                    handleUploadFile(e.target.files[0]);
+                  }
+                }}
+                className="hidden"
+              />
+
+              {/* Ação da Opção 1: Arquivo */}
+              {modoEntrada === 'arquivo' && (
+                <div className="pt-1 flex flex-col sm:flex-row items-center gap-3">
                   <button
                     type="button"
                     onClick={() => xmlInputRef.current?.click()}
                     disabled={isParsingXml || isUploadingFile}
-                    className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-all cursor-pointer disabled:opacity-50"
+                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-colors cursor-pointer disabled:opacity-50"
                   >
-                    {isParsingXml ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    {isParsingXml || isUploadingFile ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
                     ) : (
-                      <UploadCloud className="w-3.5 h-3.5" />
+                      <UploadCloud className="w-4 h-4" />
                     )}
-                    <span>Carregar Arquivo (XML/PDF)</span>
+                    <span>Selecionar XML ou PDF</span>
                   </button>
+                  <span className="text-xs text-slate-500">
+                    Lê os dados da nota fiscal (produtos ou serviços) e anexa o arquivo.
+                  </span>
                 </div>
+              )}
 
-                {/* OPÇÃO 2: CHAVE DE ACESSO OU NÚMERO DA NOTA */}
-                <div className="p-3.5 rounded-xl border border-indigo-200 bg-white hover:border-indigo-400 hover:shadow-xs transition-all flex flex-col justify-between">
-                  <div className="space-y-1 mb-2">
-                    <div className="flex items-center gap-1.5 text-indigo-700">
-                      <KeyRound className="w-4 h-4" />
-                      <span className="text-[11px] font-bold uppercase tracking-wider">Opção 2 • Chave / Nº</span>
-                    </div>
-                    <p className="text-xs font-bold text-slate-800">Chave de Acesso da NF-e</p>
-                    <p className="text-[11px] text-slate-500 leading-snug">
-                      Cole a chave de 44 dígitos da DANFE ou apenas o número da nota.
-                    </p>
-                  </div>
-                  <div className="flex gap-1.5">
+              {/* Ação da Opção 2: Chave ou Número */}
+              {modoEntrada === 'chave' && (
+                <div className="pt-1 space-y-2">
+                  <div className="flex gap-2">
                     <input
                       type="text"
                       value={chaveNfeInput}
                       onChange={(e) => setChaveNfeInput(e.target.value)}
-                      placeholder="44 dígitos ou Nº NF..."
-                      className="flex-1 h-8 px-2.5 text-[11px] font-mono rounded-lg border border-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleDecodificarChave();
+                        }
+                      }}
+                      placeholder="Cole os 44 dígitos da chave ou o número da NF..."
+                      className="flex-1 h-10 px-3 text-xs sm:text-sm font-mono rounded-xl border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600"
                     />
                     <button
                       type="button"
                       onClick={handleDecodificarChave}
-                      className="px-2.5 h-8 rounded-lg text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white shrink-0 shadow-2xs transition-colors cursor-pointer"
+                      className="px-4 h-10 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-colors cursor-pointer shrink-0"
                     >
-                      Buscar
+                      Preencher
                     </button>
                   </div>
+                  <p className="text-[11px] text-slate-500">
+                    Decodifica a nota e busca os dados da empresa na Receita Federal.
+                  </p>
                 </div>
+              )}
 
-                {/* OPÇÃO 3: PREENCHIMENTO MANUAL / COMPLEMENTAR */}
-                <div className="p-3.5 rounded-xl border border-slate-200 bg-white hover:border-slate-300 hover:shadow-xs transition-all flex flex-col justify-between">
-                  <div className="space-y-1 mb-3">
-                    <div className="flex items-center gap-1.5 text-slate-600">
-                      <PenLine className="w-4 h-4" />
-                      <span className="text-[11px] font-bold uppercase tracking-wider">Opção 3 • Manual</span>
-                    </div>
-                    <p className="text-xs font-bold text-slate-800">Preenchimento Manual</p>
-                    <p className="text-[11px] text-slate-500 leading-snug">
-                      Para compras sem nota fiscal ou para preencher/complementar itens abaixo.
-                    </p>
-                  </div>
-                  <div className="px-2.5 py-1.5 rounded-xl bg-slate-100 text-[11px] font-semibold text-slate-600 text-center">
-                    👇 Campos livres e editáveis abaixo
+              {/* Ação da Opção 3: Manual e modelos frequentes */}
+              {modoEntrada === 'manual' && (
+                <div className="pt-1 space-y-2">
+                  <p className="text-xs text-slate-600">
+                    Preencha os campos abaixo. Você também pode clicar em um modelo frequente:
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {MODELOS_COMPRAS_RAPIDAS.map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => aplicarModelo(m)}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-white hover:bg-blue-600 hover:text-white text-slate-700 border border-slate-200 transition-colors shadow-2xs cursor-pointer"
+                      >
+                        <span>{m.icone}</span>
+                        <span>{m.nome}</span>
+                      </button>
+                    ))}
                   </div>
                 </div>
-              </div>
-
-              {/* Botões de Modelos Rápidos de 1 Clique */}
-              <div className="pt-2 border-t border-blue-200/50">
-                <p className="text-[11px] font-semibold text-slate-600 mb-2 flex items-center gap-1">
-                  <span>⚡ Ou preencha com 1 clique modelos de despesas frequentes:</span>
-                </p>
-                <div className="flex flex-wrap gap-1.5">
-                  {MODELOS_COMPRAS_RAPIDAS.map((m) => (
-                    <button
-                      key={m.id}
-                      type="button"
-                      onClick={() => aplicarModelo(m)}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-white hover:bg-blue-600 hover:text-white text-slate-700 border border-slate-200/90 shadow-2xs transition-all hover:shadow-xs group cursor-pointer"
-                    >
-                      <span className="text-sm">{m.icone}</span>
-                      <span>{m.nome}</span>
-                      <span className="text-[10px] px-1.5 py-0.2 rounded-md bg-slate-100 group-hover:bg-blue-500 group-hover:text-white text-slate-500 font-mono">
-                        {m.badge}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
+              )}
             </div>
           )}
 
@@ -1168,13 +1183,22 @@ export const CompraModal: React.FC<CompraModalProps> = ({
             </div>
           )}
 
-          {/* Seção 1: Dados do Fornecedor e Identificação */}
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
-                <Building2 className="w-3.5 h-3.5 text-blue-600" />
-                Fornecedor & Identificação
+          {/* PASSO 2: DADOS DA COMPRA */}
+          <div className="space-y-4 pt-1">
+            <div className="flex items-center gap-2 pb-2 border-b border-slate-200">
+              <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-[11px] font-bold flex items-center justify-center">
+                2
+              </span>
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                Passo 2: Dados da compra
               </h3>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
+                <Building2 className="w-3.5 h-3.5 text-blue-600" />
+                Fornecedor e identificação
+              </h4>
               {fornecedoresHistorico.length > 0 && (
                 <span className="text-[11px] text-blue-600 font-medium">
                   {fornecedoresHistorico.length} fornecedores no histórico
@@ -1880,35 +1904,35 @@ export const CompraModal: React.FC<CompraModalProps> = ({
             />
           </div>
 
-          {/* RESUMO DA COMPRA PARA CONFERÊNCIA ANTES DE SALVAR */}
-          <div className="rounded-2xl border-2 border-blue-200 bg-gradient-to-br from-blue-50/70 via-indigo-50/40 to-white p-4 space-y-3 shadow-xs">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 pb-2 border-b border-blue-200/70">
+          {/* PASSO 3: CONFERÊNCIA DOS DADOS */}
+          <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 space-y-3 shadow-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 pb-2 border-b border-slate-200">
               <div className="flex items-center gap-2">
-                <div className="w-6 h-6 rounded-lg bg-blue-600 text-white flex items-center justify-center shadow-2xs">
-                  <CheckCircle2 className="w-4 h-4" />
-                </div>
-                <h4 className="text-xs font-bold uppercase tracking-wider text-blue-950">
-                  Resumo da Compra para Conferência
+                <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-[11px] font-bold flex items-center justify-center">
+                  3
+                </span>
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800">
+                  Passo 3: Conferência dos dados
                 </h4>
               </div>
-              <span className="text-[11px] font-semibold text-slate-500">
+              <span className="text-[11px] text-slate-500">
                 Revise os dados antes de confirmar o cadastro
               </span>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
               <div className="space-y-0.5">
-                <span className="text-[11px] text-slate-400 font-semibold block">Fornecedor:</span>
-                <span className="font-bold text-slate-900 truncate block">
-                  {fornecedor || '— Não informado'}
+                <span className="text-[11px] text-slate-400 font-medium block">Fornecedor</span>
+                <span className="font-semibold text-slate-900 truncate block">
+                  {fornecedor || 'Não informado'}
                 </span>
                 {cnpj && <span className="text-[10px] text-slate-500 font-mono block">{cnpj}</span>}
               </div>
 
               <div className="space-y-0.5">
-                <span className="text-[11px] text-slate-400 font-semibold block">Nº da NF / Código:</span>
-                <span className="font-bold font-mono text-blue-700 block">
-                  {codigoTi || 'S/N (Sem número)'}
+                <span className="text-[11px] text-slate-400 font-medium block">Nota fiscal</span>
+                <span className="font-semibold font-mono text-blue-700 block">
+                  {codigoTi || 'Sem número'}
                 </span>
                 <span className="text-[10px] text-slate-500 block">
                   Data: {dataCompra ? formatDate(dataCompra) : 'Hoje'}
@@ -1916,45 +1940,45 @@ export const CompraModal: React.FC<CompraModalProps> = ({
               </div>
 
               <div className="space-y-0.5">
-                <span className="text-[11px] text-slate-400 font-semibold block">Classificação:</span>
+                <span className="text-[11px] text-slate-400 font-medium block">Classificação</span>
                 <span className="font-semibold text-slate-800 block truncate">
                   {categoria || 'Geral'}
                 </span>
                 <span className="text-[10px] text-slate-500 block truncate">
-                  {tipo} {centroCusto ? `• ${centroCusto}` : ''}
+                  {tipo} {centroCusto ? `(${centroCusto})` : ''}
                 </span>
               </div>
 
               <div className="space-y-0.5">
-                <span className="text-[11px] text-slate-400 font-semibold block">Valor Total:</span>
-                <span className="font-black font-mono text-emerald-700 text-sm block">
+                <span className="text-[11px] text-slate-400 font-medium block">Valor</span>
+                <span className="font-bold font-mono text-emerald-700 text-sm block">
                   {valor ? formatCurrency(parseFloat(valor.replace(/\./g, '').replace(',', '.')) || 0) : 'R$ 0,00'}
                 </span>
                 <span className="text-[10px] text-slate-500 block">
                   {modalidadePagamento === 'parcelado'
-                    ? `${numParcelas}x parcelas`
+                    ? `${numParcelas} parcelas`
                     : modalidadePagamento === 'recorrente_mensal'
                     ? 'Recorrência mensal'
-                    : 'Pagamento à vista'}
+                    : 'À vista'}
                 </span>
               </div>
             </div>
 
             {/* Anexo conferência */}
-            <div className="pt-2 border-t border-blue-200/50 flex items-center justify-between text-[11px]">
+            <div className="pt-2 border-t border-slate-200 flex items-center justify-between text-[11px]">
               <span className="text-slate-500 flex items-center gap-1.5 truncate max-w-[70%]">
                 <FileText className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-                <span>Anexo Fiscal:</span>
-                <strong className="text-slate-700 truncate">{nomeArquivoNf || 'Nenhum anexo enviado'}</strong>
+                <span>Comprovante:</span>
+                <span className="text-slate-700 font-medium truncate">{nomeArquivoNf || 'Nenhum anexo'}</span>
               </span>
               {linkNf && (
                 <a
                   href={linkNf}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-blue-600 hover:text-blue-800 font-bold inline-flex items-center gap-1 shrink-0"
+                  className="text-blue-600 hover:text-blue-800 font-semibold inline-flex items-center gap-1 shrink-0"
                 >
-                  <span>Ver arquivo</span>
+                  <span>Abrir anexo</span>
                   <ExternalLink className="w-3 h-3" />
                 </a>
               )}
