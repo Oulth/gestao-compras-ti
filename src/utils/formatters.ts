@@ -42,3 +42,28 @@ export function formatCnpj(cnpj?: string | null): string {
   }
   return cnpj;
 }
+
+/**
+ * Converte com segurança strings monetárias em formato brasileiro (ex: "2.044,00" ou "2044,00")
+ * ou numérico padrão (ex: "2044.00" ou 2044) para número sem multiplicar indevidamente por 100.
+ */
+export function parseMoedaParaNumero(valorInput: string | number | null | undefined): number {
+  if (valorInput === null || valorInput === undefined || valorInput === '') return 0;
+  if (typeof valorInput === 'number') return isNaN(valorInput) ? 0 : valorInput;
+
+  const str = String(valorInput).trim();
+  if (!str) return 0;
+
+  // Se tiver vírgula, trata como decimal brasileiro
+  if (str.includes(',')) {
+    const semPontosMilhar = str.replace(/\./g, '');
+    const comPontoDecimal = semPontosMilhar.replace(',', '.');
+    const parsed = parseFloat(comPontoDecimal);
+    return isNaN(parsed) ? 0 : parsed;
+  }
+
+  // Se tiver apenas ponto e for formato decimal direto (ex: "2044.00")
+  const parsed = parseFloat(str);
+  return isNaN(parsed) ? 0 : parsed;
+}
+

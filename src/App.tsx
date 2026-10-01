@@ -16,6 +16,7 @@ import {
   getEquipamentos,
   saveEquipamento,
   deleteEquipamento,
+  createEquipamentosBatch,
 } from './services/equipamentos';
 import { supabase } from './services/supabase';
 import { calculateDashboardData } from './utils/dashboard';
@@ -215,6 +216,11 @@ export default function App() {
     await carregarDados(false);
   };
 
+  const handleSalvarEquipamentosLote = async (dados: EquipamentoInput[]) => {
+    await createEquipamentosBatch(dados);
+    await carregarDados(false);
+  };
+
   const handleExcluirEquipamento = async (id: string) => {
     await deleteEquipamento(id);
     toast.success('Equipamento excluído com sucesso.');
@@ -393,7 +399,9 @@ export default function App() {
         onClose={() => setCompraParaGerarEquipamento(null)}
         compra={compraParaGerarEquipamento}
         onSalvar={handleSalvarEquipamento}
+        onSalvarLote={handleSalvarEquipamentosLote}
         proximoPatrimonioSugerido={proximoPatrimonioSugerido}
+        equipamentosExistentes={equipamentos}
       />
     </div>
   );

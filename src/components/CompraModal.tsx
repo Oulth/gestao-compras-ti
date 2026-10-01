@@ -2420,10 +2420,14 @@ function parseMoedaParaNumero(valorInput: string | number | null | undefined): n
               <div>
                 <span className="text-sm font-bold text-slate-900 flex items-center gap-2">
                   <Boxes className="w-4 h-4 text-blue-600" />
-                  Cadastrar também este item no Inventário de Equipamentos
+                  {descricao.split('\n').filter((l) => l.trim().startsWith('•')).length > 1
+                    ? `Cadastrar os ${descricao.split('\n').filter((l) => l.trim().startsWith('•')).length} produtos no Inventário (um por um ou em lote)`
+                    : 'Cadastrar também no Inventário de Equipamentos'}
                 </span>
                 <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-                  Ao confirmar a compra, a tela de tombamento patrimonial abrirá automaticamente com os dados preenchidos para emissão de número de patrimônio e termo de responsabilidade.
+                  {descricao.split('\n').filter((l) => l.trim().startsWith('•')).length > 1
+                    ? `Esta Nota Fiscal possui ${descricao.split('\n').filter((l) => l.trim().startsWith('•')).length} itens identificados. Ao confirmar, a tela de tombamento abrirá com opções de cadastrar todos de uma vez com patrimônios automáticos ou revisar item por item.`
+                    : 'Ao confirmar a compra, a tela de tombamento patrimonial abrirá automaticamente com os dados preenchidos para emissão de número de patrimônio e termo de responsabilidade.'}
                 </p>
               </div>
             </label>

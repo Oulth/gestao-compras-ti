@@ -98,6 +98,49 @@ export async function createEquipamento(
 }
 
 /**
+ * Cria múltiplos equipamentos em lote no Supabase
+ */
+export async function createEquipamentosBatch(
+  equipamentos: EquipamentoInput[]
+): Promise<Equipamento[]> {
+  if (!equipamentos || equipamentos.length === 0) return [];
+
+  const payloads = equipamentos.map((eq) => ({
+    patrimonio: eq.patrimonio.trim(),
+    tipo: eq.tipo.trim(),
+    marca: eq.marca.trim(),
+    modelo: eq.modelo.trim(),
+    numero_serie: eq.numero_serie?.trim() || null,
+    localizacao: eq.localizacao.trim(),
+    status: eq.status,
+    responsavel: eq.responsavel?.trim() || null,
+    funcao_responsavel: eq.funcao_responsavel?.trim() || null,
+    compra_id: eq.compra_id || null,
+    data_aquisicao: eq.data_aquisicao || null,
+    valor_estimado: eq.valor_estimado || 0,
+    especificacoes: eq.especificacoes?.trim() || null,
+    acessorios: eq.acessorios?.trim() || null,
+    observacoes: eq.observacoes?.trim() || null,
+    atualizado_em: new Date().toISOString(),
+  }));
+
+  const { data, error } = await supabase
+    .from('equipamentos')
+    .insert(payloads)
+    .select();
+
+  if (error) {
+    if (error.code === '23505') {
+      throw new Error(`Um ou mais códigos de patrimônio já estão cadastrados no inventário.`);
+    }
+    console.error('[Supabase] Erro ao cadastrar lote de equipamentos:', error);
+    throw new Error(`Falha ao cadastrar itens no inventário: ${error.message}`);
+  }
+
+  return (data as Equipamento[]) || [];
+}
+
+/**
  * Atualiza um equipamento existente
  */
 export async function updateEquipamento(
