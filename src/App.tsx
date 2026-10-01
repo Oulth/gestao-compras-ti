@@ -180,9 +180,18 @@ export default function App() {
     setCompraEmEdicao(null);
   };
 
-  const handleSalvarCompra = async (dados: CompraInput | Compra | CompraInput[]) => {
-    await saveCompra(dados);
+  const handleSalvarCompra = async (
+    dados: CompraInput | Compra | CompraInput[],
+    adicionarInventario?: boolean
+  ) => {
+    const res = await saveCompra(dados);
     await carregarDados(false);
+    if (adicionarInventario) {
+      const compraCriada = Array.isArray(res) ? res[0] : res;
+      if (compraCriada) {
+        setCompraParaGerarEquipamento(compraCriada);
+      }
+    }
   };
 
   const handleExcluirCompra = async (id: string) => {

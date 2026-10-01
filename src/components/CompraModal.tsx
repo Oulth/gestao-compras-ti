@@ -17,10 +17,13 @@ import {
   CreditCard,
   Banknote,
   CalendarDays,
-  Info,
   AlertTriangle,
   KeyRound,
   PenLine,
+  ArrowLeft,
+  ArrowRight,
+  Boxes,
+  Check,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
@@ -40,11 +43,13 @@ import { MODELOS_COMPRAS_RAPIDAS, type ModeloCompraRapida } from '../utils/prese
 import { verificarDuplicidade, type ResultadoDuplicidade } from '../utils/duplicidadeDetector';
 import { decodificarChaveNfe } from '../utils/chaveNfeParser';
 
+export type EtapaModal = 1 | 2 | 3;
+
 export interface CompraModalProps {
   isOpen: boolean;
   onClose: () => void;
   compraEmEdicao?: Compra | null;
-  onSalvar: (compra: CompraInput | Compra | CompraInput[]) => Promise<void>;
+  onSalvar: (compra: CompraInput | Compra | CompraInput[], adicionarAoInventario?: boolean) => Promise<void>;
   categorias?: string[];
   centrosCusto?: string[];
   formasPagamento?: string[];
@@ -144,6 +149,10 @@ export const CompraModal: React.FC<CompraModalProps> = ({
 
   const [chaveNfeInput, setChaveNfeInput] = useState<string>('');
   const [modoEntrada, setModoEntrada] = useState<ModoEntrada>('arquivo');
+
+  // Controle de etapas do modal (Passo 1: Início, Passo 2: Dados, Passo 3: Conferência)
+  const [etapaAtual, setEtapaAtual] = useState<EtapaModal>(compraEmEdicao ? 2 : 1);
+  const [adicionarAoInventario, setAdicionarAoInventario] = useState<boolean>(false);
 
   // Estados de controle e feedback
   const [isSearchingCnpj, setIsSearchingCnpj] = useState<boolean>(false);
@@ -275,6 +284,8 @@ export const CompraModal: React.FC<CompraModalProps> = ({
     setIgnorarAvisoDuplicidade(false);
     setIsConfirmandoDuplicidadeModal(false);
     setErrors({});
+    setEtapaAtual(compraEmEdicao ? 2 : 1);
+    setAdicionarAoInventario(false);
   }, [isOpen, compraEmEdicao]);
 
   // Decodifica Chave de Acesso de 44 dígitos da NF-e ou número da NF
@@ -299,6 +310,7 @@ export const CompraModal: React.FC<CompraModalProps> = ({
         toast.success(
           `Chave decodificada: NF Nº ${decodificada.numeroNf} (${decodificada.ufSigla}). Buscando dados na Receita Federal...`
         );
+        setEtapaAtual(2);
         return;
       }
     }
@@ -307,6 +319,7 @@ export const CompraModal: React.FC<CompraModalProps> = ({
     if (limpa.length >= 1 && limpa.length <= 9) {
       setCodigoTi(`NF-${limpa}`);
       toast.info(`Número da nota definido como NF-${limpa}.`);
+      setEtapaAtual(2);
       return;
     }
 
@@ -385,6 +398,7 @@ export const CompraModal: React.FC<CompraModalProps> = ({
 
     setErrors({});
     toast.success(`Modelo "${modelo.nome}" aplicado.`);
+    setEtapaAtual(2);
   };
 
   // Processa arquivo XML de NF-e
@@ -444,6 +458,7 @@ export const CompraModal: React.FC<CompraModalProps> = ({
       }
 
       setErrors({});
+      setEtapaAtual(2);
 
       setIsUploadingFile(true);
       try {
@@ -605,6 +620,7 @@ export const CompraModal: React.FC<CompraModalProps> = ({
       const res = await uploadComprovanteNf(file);
       setLinkNf(res.url);
       setNomeArquivoNf(res.nome);
+      setEtapaAtual(2);
       toast.success('Comprovante / NF enviado com sucesso ao Supabase Storage!');
     } catch (err: any) {
       console.error('Erro no upload do anexo:', err);
@@ -767,8 +783,8 @@ export const CompraModal: React.FC<CompraModalProps> = ({
           observacoes: observacoes.trim() || null,
         };
 
-        await onSalvar(payload);
-        toast.success('Lançamento atualizado com sucesso!');
+        await onSalvar(payload, adicionarAoInventario);
+        toast.success('Lançamento atualizado com sucesso.');
         onClose();
         return;
       }
@@ -805,8 +821,8 @@ export const CompraModal: React.FC<CompraModalProps> = ({
           });
         }
 
-        await onSalvar(loteCompras);
-        toast.success(`🎉 Lançamento desmembrado em ${numParcelas} parcelas mensais cadastradas com sucesso!`);
+        await onSalvar(loteCompras, adicionarAoInventario);
+        toast.success(`Lançamento desmembrado em ${numParcelas} parcelas mensais cadastradas com sucesso.`);
         onClose();
         return;
       }
@@ -841,8 +857,8 @@ export const CompraModal: React.FC<CompraModalProps> = ({
           });
         }
 
-        await onSalvar(loteRecorrente);
-        toast.success(`🔄 ${mesesRecorrentesCalculados} mensalidades recorrentes programadas no sistema!`);
+        await onSalvar(loteRecorrente, adicionarAoInventario);
+        toast.success(`${mesesRecorrentesCalculados} mensalidades recorrentes programadas no sistema.`);
         onClose();
         return;
       }
@@ -874,8 +890,8 @@ export const CompraModal: React.FC<CompraModalProps> = ({
         observacoes: observacoes.trim() || null,
       };
 
-      await onSalvar(payloadUnico);
-      toast.success('Compra cadastrada com sucesso!');
+      await onSalvar(payloadUnico, adicionarAoInventario);
+      toast.success('Compra cadastrada com sucesso.');
       onClose();
     } catch (err: any) {
       console.error('Erro ao salvar compra:', err);
@@ -885,14 +901,24 @@ export const CompraModal: React.FC<CompraModalProps> = ({
     }
   };
 
+  // Avançar para a etapa 3 de conferência com validação
+  const handleAvancarParaConferencia = () => {
+    if (!validarFormulario()) {
+      toast.error('Preencha todos os campos obrigatórios destacados.');
+      return;
+    }
+    setEtapaAtual(3);
+  };
+
   // Submissão do formulário com verificação e confirmação anti-duplicidade
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
 
     if (isSaving || isUploadingFile || isParsingXml) return;
 
     if (!validarFormulario()) {
       toast.error('Preencha todos os campos obrigatórios destacados.');
+      setEtapaAtual(2);
       return;
     }
 
@@ -955,154 +981,280 @@ export const CompraModal: React.FC<CompraModalProps> = ({
           </button>
         </div>
 
+        {/* Barra de Progresso / Stepper dos Passos */}
+        <div className="px-6 py-3 bg-slate-50 border-b border-slate-200/80 shrink-0">
+          <div className="flex items-center justify-between max-w-xl mx-auto">
+            {/* Passo 1: Início (oculto no modo edição) */}
+            {!isEditing && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setEtapaAtual(1)}
+                  className={`flex items-center gap-2 text-xs font-semibold transition-colors cursor-pointer ${
+                    etapaAtual === 1
+                      ? 'text-blue-600 font-bold'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <span
+                    className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                      etapaAtual === 1
+                        ? 'bg-blue-600 text-white shadow-xs'
+                        : etapaAtual > 1
+                        ? 'bg-emerald-100 text-emerald-700'
+                        : 'bg-slate-200 text-slate-600'
+                    }`}
+                  >
+                    {etapaAtual > 1 ? <Check className="w-3.5 h-3.5" /> : '1'}
+                  </span>
+                  <span>1. Início</span>
+                </button>
+
+                <div className={`h-0.5 flex-1 mx-2 sm:mx-4 ${etapaAtual > 1 ? 'bg-emerald-400' : 'bg-slate-200'}`} />
+              </>
+            )}
+
+            {/* Passo 2: Dados da Compra */}
+            <button
+              type="button"
+              onClick={() => setEtapaAtual(2)}
+              className={`flex items-center gap-2 text-xs font-semibold transition-colors cursor-pointer ${
+                etapaAtual === 2
+                  ? 'text-blue-600 font-bold'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <span
+                className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                  etapaAtual === 2
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : etapaAtual > 2
+                    ? 'bg-emerald-100 text-emerald-700'
+                    : 'bg-slate-200 text-slate-600'
+                }`}
+              >
+                {etapaAtual > 2 ? <Check className="w-3.5 h-3.5" /> : isEditing ? '1' : '2'}
+              </span>
+              <span>{isEditing ? '1. Dados da Compra' : '2. Dados'}</span>
+            </button>
+
+            <div className={`h-0.5 flex-1 mx-2 sm:mx-4 ${etapaAtual > 2 ? 'bg-emerald-400' : 'bg-slate-200'}`} />
+
+            {/* Passo 3: Conferência & Inventário */}
+            <button
+              type="button"
+              onClick={() => {
+                if (validarFormulario()) {
+                  setEtapaAtual(3);
+                } else {
+                  toast.warning('Preencha os campos obrigatórios antes de avançar para a conferência.');
+                }
+              }}
+              className={`flex items-center gap-2 text-xs font-semibold transition-colors cursor-pointer ${
+                etapaAtual === 3
+                  ? 'text-blue-600 font-bold'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <span
+                className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                  etapaAtual === 3
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'bg-slate-200 text-slate-600'
+                }`}
+              >
+                {isEditing ? '2' : '3'}
+              </span>
+              <span>{isEditing ? '2. Conferência' : '3. Conferência & Inventário'}</span>
+            </button>
+          </div>
+        </div>
+
         {/* Corpo do Formulário com Scroll */}
         <form onSubmit={handleSubmit} className="overflow-y-auto px-6 py-6 space-y-6 flex-1 text-slate-800">
           
-          {/* PASSO 1: FORMA DE LANÇAMENTO */}
-          {!isEditing && (
-            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 sm:p-5 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-[11px] font-bold flex items-center justify-center">
-                    1
-                  </span>
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
-                    Passo 1: Como deseja lançar?
-                  </h3>
+          {/* PASSO 1: FORMA DE LANÇAMENTO (OCULTO NAS OUTRAS ETAPAS) */}
+          {etapaAtual === 1 && !isEditing && (
+            <div className="space-y-6 animate-in fade-in duration-200">
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 sm:p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center">
+                      1
+                    </span>
+                    <h3 className="text-sm font-bold text-slate-800">
+                      Como você deseja lançar esta compra?
+                    </h3>
+                  </div>
+                  <span className="text-xs text-slate-500">Passo 1 de 3</span>
                 </div>
-                <span className="text-[11px] text-slate-500">Escolha uma opção</span>
-              </div>
 
-              {/* Seletor Segmentado */}
-              <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-200/70 rounded-xl text-xs">
-                <button
-                  type="button"
-                  onClick={() => setModoEntrada('arquivo')}
-                  className={`py-2 px-2.5 rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer text-xs ${
-                    modoEntrada === 'arquivo'
-                      ? 'bg-white text-blue-700 font-bold shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900 font-medium'
-                  }`}
-                >
-                  <FileCode className="w-4 h-4 shrink-0" />
-                  <span className="truncate">Arquivo (XML / PDF)</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setModoEntrada('chave')}
-                  className={`py-2 px-2.5 rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer text-xs ${
-                    modoEntrada === 'chave'
-                      ? 'bg-white text-blue-700 font-bold shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900 font-medium'
-                  }`}
-                >
-                  <KeyRound className="w-4 h-4 shrink-0" />
-                  <span className="truncate">Chave ou Nº da NF</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setModoEntrada('manual')}
-                  className={`py-2 px-2.5 rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer text-xs ${
-                    modoEntrada === 'manual'
-                      ? 'bg-white text-blue-700 font-bold shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900 font-medium'
-                  }`}
-                >
-                  <PenLine className="w-4 h-4 shrink-0" />
-                  <span className="truncate">Manual</span>
-                </button>
-              </div>
-
-              <input
-                ref={xmlInputRef}
-                type="file"
-                accept=".xml,application/pdf,text/xml,application/xml"
-                onChange={(e) => {
-                  if (e.target.files && e.target.files[0]) {
-                    handleUploadFile(e.target.files[0]);
-                  }
-                }}
-                className="hidden"
-              />
-
-              {/* Ação da Opção 1: Arquivo */}
-              {modoEntrada === 'arquivo' && (
-                <div className="pt-1 flex flex-col sm:flex-row items-center gap-3">
+                {/* Seletor Segmentado */}
+                <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-200/70 rounded-xl text-xs">
                   <button
                     type="button"
-                    onClick={() => xmlInputRef.current?.click()}
-                    disabled={isParsingXml || isUploadingFile}
-                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                    onClick={() => setModoEntrada('arquivo')}
+                    className={`py-2 px-2.5 rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer text-xs ${
+                      modoEntrada === 'arquivo'
+                        ? 'bg-white text-blue-700 font-bold shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900 font-medium'
+                    }`}
                   >
-                    {isParsingXml || isUploadingFile ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <UploadCloud className="w-4 h-4" />
-                    )}
-                    <span>Selecionar XML ou PDF</span>
+                    <FileCode className="w-4 h-4 shrink-0" />
+                    <span className="truncate">Arquivo (XML / PDF)</span>
                   </button>
-                  <span className="text-xs text-slate-500">
-                    Lê os dados da nota fiscal (produtos ou serviços) e anexa o arquivo.
-                  </span>
-                </div>
-              )}
 
-              {/* Ação da Opção 2: Chave ou Número */}
-              {modoEntrada === 'chave' && (
-                <div className="pt-1 space-y-2">
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={chaveNfeInput}
-                      onChange={(e) => setChaveNfeInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          handleDecodificarChave();
-                        }
-                      }}
-                      placeholder="Cole os 44 dígitos da chave ou o número da NF..."
-                      className="flex-1 h-10 px-3 text-xs sm:text-sm font-mono rounded-xl border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleDecodificarChave}
-                      className="px-4 h-10 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-colors cursor-pointer shrink-0"
-                    >
-                      Preencher
-                    </button>
-                  </div>
-                  <p className="text-[11px] text-slate-500">
-                    Decodifica a nota e busca os dados da empresa na Receita Federal.
-                  </p>
-                </div>
-              )}
+                  <button
+                    type="button"
+                    onClick={() => setModoEntrada('chave')}
+                    className={`py-2 px-2.5 rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer text-xs ${
+                      modoEntrada === 'chave'
+                        ? 'bg-white text-blue-700 font-bold shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900 font-medium'
+                    }`}
+                  >
+                    <KeyRound className="w-4 h-4 shrink-0" />
+                    <span className="truncate">Chave ou Nº da NF</span>
+                  </button>
 
-              {/* Ação da Opção 3: Manual e modelos frequentes */}
-              {modoEntrada === 'manual' && (
-                <div className="pt-1 space-y-2">
-                  <p className="text-xs text-slate-600">
-                    Preencha os campos abaixo. Você também pode clicar em um modelo frequente:
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {MODELOS_COMPRAS_RAPIDAS.map((m) => (
+                  <button
+                    type="button"
+                    onClick={() => setModoEntrada('manual')}
+                    className={`py-2 px-2.5 rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer text-xs ${
+                      modoEntrada === 'manual'
+                        ? 'bg-white text-blue-700 font-bold shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900 font-medium'
+                    }`}
+                  >
+                    <PenLine className="w-4 h-4 shrink-0" />
+                    <span className="truncate">Manual</span>
+                  </button>
+                </div>
+
+                <input
+                  ref={xmlInputRef}
+                  type="file"
+                  accept=".xml,application/pdf,text/xml,application/xml"
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files[0]) {
+                      handleUploadFile(e.target.files[0]);
+                    }
+                  }}
+                  className="hidden"
+                />
+
+                {/* Opção 1: Arquivo */}
+                {modoEntrada === 'arquivo' && (
+                  <div className="pt-2 p-4 bg-white rounded-xl border border-slate-200/80 space-y-3">
+                    <div className="flex flex-col sm:flex-row items-center gap-3">
                       <button
-                        key={m.id}
                         type="button"
-                        onClick={() => aplicarModelo(m)}
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-white hover:bg-blue-600 hover:text-white text-slate-700 border border-slate-200 transition-colors shadow-2xs cursor-pointer"
+                        onClick={() => xmlInputRef.current?.click()}
+                        disabled={isParsingXml || isUploadingFile}
+                        className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-colors cursor-pointer disabled:opacity-50"
                       >
-                        <span>{m.icone}</span>
-                        <span>{m.nome}</span>
+                        {isParsingXml || isUploadingFile ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <UploadCloud className="w-4 h-4" />
+                        )}
+                        <span>Selecionar XML ou PDF</span>
                       </button>
-                    ))}
+                      <span className="text-xs text-slate-500">
+                        Lê os dados da nota fiscal (produtos ou serviços) e anexa o arquivo.
+                      </span>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
+
+                {/* Opção 2: Chave ou Número */}
+                {modoEntrada === 'chave' && (
+                  <div className="pt-2 p-4 bg-white rounded-xl border border-slate-200/80 space-y-2">
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={chaveNfeInput}
+                        onChange={(e) => setChaveNfeInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleDecodificarChave();
+                          }
+                        }}
+                        placeholder="Cole os 44 dígitos da chave ou o número da NF..."
+                        className="flex-1 h-10 px-3 text-xs sm:text-sm font-mono rounded-xl border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleDecodificarChave}
+                        className="px-4 h-10 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-colors cursor-pointer shrink-0"
+                      >
+                        Preencher e Avançar
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-slate-500">
+                      Decodifica o número da nota, UF e CNPJ, buscando os dados da empresa na Receita Federal.
+                    </p>
+                  </div>
+                )}
+
+                {/* Opção 3: Manual e modelos frequentes */}
+                {modoEntrada === 'manual' && (
+                  <div className="pt-2 p-4 bg-white rounded-xl border border-slate-200/80 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-medium text-slate-700">
+                        Preencha os campos ou clique em um modelo frequente para avançar:
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setEtapaAtual(2)}
+                        className="text-xs font-bold text-blue-600 hover:text-blue-800"
+                      >
+                        Ir para os campos em branco →
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {MODELOS_COMPRAS_RAPIDAS.map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => aplicarModelo(m)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-50 hover:bg-blue-600 hover:text-white text-slate-700 border border-slate-200 transition-colors shadow-2xs cursor-pointer"
+                        >
+                          <span>{m.icone}</span>
+                          <span>{m.nome}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Botões do Rodapé do Passo 1 */}
+              <div className="pt-4 border-t border-slate-200 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 transition-colors"
+                >
+                  Cancelar
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setEtapaAtual(2)}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-md shadow-blue-500/20 transition-all cursor-pointer"
+                >
+                  <span>Continuar com Preenchimento Manual</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           )}
+
+          {/* PASSO 2: DADOS DA COMPRA (OCULTO NAS ETAPAS 1 E 3) */}
+          {etapaAtual === 2 && (
+            <div className="space-y-6 animate-in fade-in duration-200">
 
           {/* AVISO DE NOTA FISCAL DUPLICADA DETECTADA */}
           {duplicidadeAtual.isDuplicada && !ignorarAvisoDuplicidade && (
@@ -1904,72 +2056,171 @@ export const CompraModal: React.FC<CompraModalProps> = ({
             />
           </div>
 
-          {/* PASSO 3: CONFERÊNCIA DOS DADOS */}
-          <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 space-y-3 shadow-xs">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 pb-2 border-b border-slate-200">
-              <div className="flex items-center gap-2">
-                <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-[11px] font-bold flex items-center justify-center">
-                  3
-                </span>
-                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800">
-                  Passo 3: Conferência dos dados
-                </h4>
-              </div>
-              <span className="text-[11px] text-slate-500">
-                Revise os dados antes de confirmar o cadastro
-              </span>
+          {/* Rodapé do Passo 2: Navegação */}
+          <div className="pt-4 border-t border-slate-200 flex items-center justify-between gap-3">
+            <div>
+              {!isEditing && (
+                <button
+                  type="button"
+                  onClick={() => setEtapaAtual(1)}
+                  className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  <span>Voltar ao Início</span>
+                </button>
+              )}
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-              <div className="space-y-0.5">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleAvancarParaConferencia}
+                className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-md shadow-blue-500/20 transition-all cursor-pointer"
+              >
+                <span>Avançar para Conferência</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PASSO 3: CONFERÊNCIA E FINALIZAÇÃO (OCULTO NAS ETAPAS 1 E 2) */}
+      {etapaAtual === 3 && (
+        <div className="space-y-6 animate-in fade-in duration-200">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 pb-2 border-b border-slate-200">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">
+                Passo 3: Conferência e Finalização
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Revise os dados antes de gravar no sistema e escolha se deseja adicionar ao inventário de equipamentos.
+              </p>
+            </div>
+            <span className="text-xs text-slate-500">Passo 3 de 3</span>
+          </div>
+
+          {/* AVISO DE NOTA FISCAL DUPLICADA DETECTADA NO RESUMO */}
+          {duplicidadeAtual.isDuplicada && !ignorarAvisoDuplicidade && (
+            <div className="rounded-2xl border-2 border-amber-300 bg-amber-50/95 p-4 shadow-sm">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h4 className="text-sm font-bold text-amber-950">
+                    Atenção: Possível Nota Fiscal Duplicada
+                  </h4>
+                  <p className="text-xs text-amber-800 mt-1 font-medium">
+                    {duplicidadeAtual.descricaoMotivo}
+                  </p>
+                  <div className="mt-2 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setEtapaAtual(2)}
+                      className="px-3 py-1.5 text-xs font-bold text-amber-900 bg-amber-200 hover:bg-amber-300 rounded-lg transition-colors cursor-pointer"
+                    >
+                      Voltar e Editar Dados
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIgnorarAvisoDuplicidade(true);
+                        toast.warning('Aviso ignorado. O lançamento poderá ser cadastrado.');
+                      }}
+                      className="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-100 border border-amber-300 rounded-lg transition-colors cursor-pointer"
+                    >
+                      Ignorar e Cadastrar Mesmo Assim
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* CARD RESUMO COMPLETO DOS DADOS DA COMPRA */}
+          <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-5 space-y-4 shadow-xs">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
+              <div className="space-y-1">
                 <span className="text-[11px] text-slate-400 font-medium block">Fornecedor</span>
-                <span className="font-semibold text-slate-900 truncate block">
+                <span className="font-semibold text-slate-900 block truncate" title={fornecedor}>
                   {fornecedor || 'Não informado'}
                 </span>
-                {cnpj && <span className="text-[10px] text-slate-500 font-mono block">{cnpj}</span>}
+                {cnpj && <span className="text-[11px] text-slate-500 font-mono block">{cnpj}</span>}
               </div>
 
-              <div className="space-y-0.5">
-                <span className="text-[11px] text-slate-400 font-medium block">Nota fiscal</span>
-                <span className="font-semibold font-mono text-blue-700 block">
+              <div className="space-y-1">
+                <span className="text-[11px] text-slate-400 font-medium block">Nota Fiscal / Código</span>
+                <span className="font-bold font-mono text-blue-700 block">
                   {codigoTi || 'Sem número'}
                 </span>
-                <span className="text-[10px] text-slate-500 block">
+                <span className="text-[11px] text-slate-500 block">
                   Data: {dataCompra ? formatDate(dataCompra) : 'Hoje'}
                 </span>
               </div>
 
-              <div className="space-y-0.5">
+              <div className="space-y-1">
                 <span className="text-[11px] text-slate-400 font-medium block">Classificação</span>
-                <span className="font-semibold text-slate-800 block truncate">
+                <span className="font-semibold text-slate-800 block truncate" title={categoria}>
                   {categoria || 'Geral'}
                 </span>
-                <span className="text-[10px] text-slate-500 block truncate">
-                  {tipo} {centroCusto ? `(${centroCusto})` : ''}
+                <span className="text-[11px] text-slate-500 block truncate">
+                  {tipo} {centroCusto ? `• ${centroCusto}` : ''}
                 </span>
               </div>
 
-              <div className="space-y-0.5">
-                <span className="text-[11px] text-slate-400 font-medium block">Valor</span>
-                <span className="font-bold font-mono text-emerald-700 text-sm block">
+              <div className="space-y-1">
+                <span className="text-[11px] text-slate-400 font-medium block">Valor Total</span>
+                <span className="font-bold font-mono text-emerald-700 text-base block">
                   {valor ? formatCurrency(parseFloat(valor.replace(/\./g, '').replace(',', '.')) || 0) : 'R$ 0,00'}
                 </span>
-                <span className="text-[10px] text-slate-500 block">
+                <span className="text-[11px] text-slate-500 block">
                   {modalidadePagamento === 'parcelado'
-                    ? `${numParcelas} parcelas`
+                    ? `${numParcelas}x parcelas`
                     : modalidadePagamento === 'recorrente_mensal'
-                    ? 'Recorrência mensal'
+                    ? `${mesesRecorrentesCalculados} mensalidades`
                     : 'À vista'}
                 </span>
               </div>
             </div>
 
-            {/* Anexo conferência */}
-            <div className="pt-2 border-t border-slate-200 flex items-center justify-between text-[11px]">
-              <span className="text-slate-500 flex items-center gap-1.5 truncate max-w-[70%]">
-                <FileText className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+            {/* Descrição dos Itens / Produto */}
+            <div className="pt-3 border-t border-slate-200/80">
+              <span className="text-[11px] text-slate-400 font-medium block mb-0.5">Descrição dos Itens</span>
+              <p className="text-xs text-slate-800 font-medium leading-relaxed bg-white p-2.5 rounded-lg border border-slate-200">
+                {descricao || 'Nenhuma descrição detalhada informada.'}
+              </p>
+            </div>
+
+            {/* Pagamento e Garantia */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs pt-1">
+              <div>
+                <span className="text-[11px] text-slate-400 font-medium block">Forma de Pagamento</span>
+                <span className="font-semibold text-slate-700">{formaPagamento || 'Não informada'}</span>
+              </div>
+              <div>
+                <span className="text-[11px] text-slate-400 font-medium block">Status do Pagamento</span>
+                <span className="font-semibold text-slate-700">{statusPagamento}</span>
+              </div>
+              <div>
+                <span className="text-[11px] text-slate-400 font-medium block">Garantia / Validade</span>
+                <span className="font-semibold text-slate-700">{garantia ? formatDate(garantia) : 'Sem garantia'}</span>
+              </div>
+            </div>
+
+            {/* Comprovante / Anexo */}
+            <div className="pt-3 border-t border-slate-200/80 flex items-center justify-between text-xs">
+              <span className="text-slate-600 flex items-center gap-2 truncate max-w-[70%]">
+                <FileText className="w-4 h-4 text-blue-600 shrink-0" />
                 <span>Comprovante:</span>
-                <span className="text-slate-700 font-medium truncate">{nomeArquivoNf || 'Nenhum anexo'}</span>
+                <span className="text-slate-800 font-semibold truncate">{nomeArquivoNf || 'Nenhum comprovante anexado'}</span>
               </span>
               {linkNf && (
                 <a
@@ -1978,39 +2229,66 @@ export const CompraModal: React.FC<CompraModalProps> = ({
                   rel="noopener noreferrer"
                   className="text-blue-600 hover:text-blue-800 font-semibold inline-flex items-center gap-1 shrink-0"
                 >
-                  <span>Abrir anexo</span>
-                  <ExternalLink className="w-3 h-3" />
+                  <span>Abrir comprovante</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
                 </a>
               )}
             </div>
+
+            {/* Observações se houver */}
+            {observacoes && (
+              <div className="pt-2 border-t border-slate-200/80 text-xs">
+                <span className="text-[11px] text-slate-400 font-medium block">Observações:</span>
+                <span className="text-slate-600 italic">{observacoes}</span>
+              </div>
+            )}
           </div>
 
-          {/* Rodapé com Botões de Ação */}
-          <div className="pt-4 border-t border-slate-200/80 flex items-center justify-between gap-3 shrink-0">
-            <div className="text-[11px] text-slate-500 hidden sm:flex items-center gap-1.5">
-              <Info className="w-3.5 h-3.5 text-blue-600" />
-              <span>
-                {modalidadePagamento === 'parcelado' && desmembrarParcelas && !isEditing
-                  ? `Serão gerados ${numParcelas} lançamentos mensais no Supabase.`
-                  : modalidadePagamento === 'recorrente_mensal' && gerarMensalidadesFuturas && !isEditing
-                  ? `Serão programadas ${mesesRecorrentesCalculados} mensalidades no Supabase.`
-                  : 'Lançamento financeiro individual.'}
-              </span>
-            </div>
+          {/* CARD DE OPÇÃO: ADICIONAR AO INVENTÁRIO DE EQUIPAMENTOS */}
+          <div className="rounded-2xl border-2 border-blue-200 bg-blue-50/80 p-4 sm:p-5">
+            <label className="flex items-start gap-3.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={adicionarAoInventario}
+                onChange={(e) => setAdicionarAoInventario(e.target.checked)}
+                className="mt-1 w-5 h-5 rounded text-blue-600 focus:ring-blue-500 border-slate-300 cursor-pointer shrink-0"
+              />
+              <div>
+                <span className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <Boxes className="w-4 h-4 text-blue-600" />
+                  Cadastrar também este item no Inventário de Equipamentos
+                </span>
+                <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                  Ao confirmar a compra, a tela de tombamento patrimonial abrirá automaticamente com os dados preenchidos para emissão de número de patrimônio e termo de responsabilidade.
+                </p>
+              </div>
+            </label>
+          </div>
+
+          {/* Rodapé do Passo 3 */}
+          <div className="pt-4 border-t border-slate-200 flex items-center justify-between gap-3">
+            <button
+              type="button"
+              onClick={() => setEtapaAtual(2)}
+              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span>Voltar e Editar Dados</span>
+            </button>
 
             <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={onClose}
                 disabled={isSaving || isUploadingFile || isParsingXml}
-                className="px-5 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 transition-colors disabled:opacity-50"
+                className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 transition-colors disabled:opacity-50"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
                 disabled={isSaving || isUploadingFile || isParsingXml}
-                className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-md shadow-blue-500/20 disabled:bg-blue-400 disabled:cursor-not-allowed transition-all"
+                className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-md shadow-blue-500/20 disabled:bg-blue-400 disabled:cursor-not-allowed transition-all cursor-pointer"
               >
                 {isSaving ? (
                   <>
@@ -2027,13 +2305,15 @@ export const CompraModal: React.FC<CompraModalProps> = ({
                         ? `Cadastrar ${numParcelas}x Parcelas`
                         : modalidadePagamento === 'recorrente_mensal' && gerarMensalidadesFuturas
                         ? `Programar ${mesesRecorrentesCalculados} Mensalidades`
-                        : 'Confirmar & Cadastrar Compra'}
+                        : 'Confirmar e Cadastrar Compra'}
                     </span>
                   </>
                 )}
               </button>
             </div>
           </div>
+        </div>
+      )}
         </form>
       </div>
 
