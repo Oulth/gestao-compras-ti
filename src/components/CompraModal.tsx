@@ -42,7 +42,7 @@ import { parseNfeXml } from '../utils/nfeParser';
 import { parseNotaFiscalPdf } from '../utils/pdfParser';
 import { MODELOS_COMPRAS_RAPIDAS, type ModeloCompraRapida } from '../utils/presetsCompras';
 import { verificarDuplicidade, type ResultadoDuplicidade } from '../utils/duplicidadeDetector';
-import { decodificarChaveNfe } from '../utils/chaveNfeParser';
+import { decodificarChaveNfe, type ChaveNfeDecodificada } from '../utils/chaveNfeParser';
 
 export type EtapaModal = 1 | 2 | 3;
 
@@ -289,9 +289,63 @@ export const CompraModal: React.FC<CompraModalProps> = ({
     setAdicionarAoInventario(false);
   }, [isOpen, compraEmEdicao]);
 
+  // Aplica dados de uma chave decodificada em todos os estados do formulário
+  const aplicarDadosDecodificados = (decodificada: ChaveNfeDecodificada) => {
+    if (decodificada.codigoTi) setCodigoTi(decodificada.codigoTi);
+    if (decodificada.fornecedorSugerido) {
+      setFornecedor(decodificada.fornecedorSugerido);
+    }
+    if (decodificada.cnpj) {
+      setCnpj(decodificada.cnpj);
+      if (!decodificada.fornecedorSugerido) {
+        realizarBuscaCnpj(decodificada.cnpj);
+      }
+    }
+    if (decodificada.tipoDespesaSugerido) {
+      setTipo(decodificada.tipoDespesaSugerido);
+    }
+    if (decodificada.categoriaSugerida) {
+      setCategoria(decodificada.categoriaSugerida);
+    }
+    if (decodificada.centroCustoSugerido) {
+      setCentroCusto(decodificada.centroCustoSugerido);
+    }
+    if (decodificada.dataCompraSugerida) {
+      setDataCompra(decodificada.dataCompraSugerida);
+    }
+    if (decodificada.valorSugerido) {
+      setValor(decodificada.valorSugerido);
+    }
+    if (decodificada.descricaoSugerida) {
+      setDescricao(decodificada.descricaoSugerida);
+    }
+    if (decodificada.formaPagamentoSugerida) {
+      setFormaPagamento(decodificada.formaPagamentoSugerida);
+    }
+    if (decodificada.statusPagamentoSugerido) {
+      setStatusPagamento(decodificada.statusPagamentoSugerido);
+    }
+    if (decodificada.observacoesSugeridas) {
+      setObservacoes(decodificada.observacoesSugeridas);
+    }
+    if (decodificada.modalidadeSugerida) {
+      setModalidadePagamento(decodificada.modalidadeSugerida);
+      if (decodificada.modalidadeSugerida === 'parcelado') {
+        setNumParcelas(decodificada.numParcelasSugerido || 2);
+        setStatusPagamento('Parcelado');
+      } else if (decodificada.modalidadeSugerida === 'recorrente_mensal') {
+        setDuracaoRecorrencia('12_meses');
+      }
+    }
+
+    setErrors({});
+    toast.success(decodificada.mensagem);
+    setEtapaAtual(2);
+  };
+
   // Decodifica Chave de Acesso (NF-e 44 dígitos ou NFS-e 50 dígitos), Boleto ou Número da NF
-  const handleDecodificarChave = () => {
-    const limpa = chaveNfeInput.replace(/\D/g, '');
+  const handleDecodificarChave = (chaveManual?: string) => {
+    const limpa = (chaveManual || chaveNfeInput).replace(/\D/g, '');
     if (!limpa) {
       toast.error('Informe a Chave de Acesso (NF-e ou NFS-e), Linha do Boleto ou o Número da Nota.');
       return;
@@ -299,65 +353,50 @@ export const CompraModal: React.FC<CompraModalProps> = ({
 
     const decodificada = decodificarChaveNfe(limpa, comprasExistentes);
     if (decodificada && decodificada.valida) {
-      if (decodificada.codigoTi) setCodigoTi(decodificada.codigoTi);
-      if (decodificada.fornecedorSugerido) {
-        setFornecedor(decodificada.fornecedorSugerido);
-      }
-      if (decodificada.cnpj) {
-        setCnpj(decodificada.cnpj);
-        if (!decodificada.fornecedorSugerido) {
-          realizarBuscaCnpj(decodificada.cnpj);
-        }
-      }
-      if (decodificada.tipoDespesaSugerido) {
-        setTipo(decodificada.tipoDespesaSugerido);
-      }
-      if (decodificada.categoriaSugerida) {
-        setCategoria(decodificada.categoriaSugerida);
-      }
-      if (decodificada.centroCustoSugerido) {
-        setCentroCusto(decodificada.centroCustoSugerido);
-      }
-      if (decodificada.dataCompraSugerida) {
-        setDataCompra(decodificada.dataCompraSugerida);
-      }
-      if (decodificada.valorSugerido) {
-        setValor(decodificada.valorSugerido);
-      }
-      if (decodificada.descricaoSugerida) {
-        setDescricao(decodificada.descricaoSugerida);
-      }
-      if (decodificada.formaPagamentoSugerida) {
-        setFormaPagamento(decodificada.formaPagamentoSugerida);
-      }
-      if (decodificada.statusPagamentoSugerido) {
-        setStatusPagamento(decodificada.statusPagamentoSugerido);
-      }
-      if (decodificada.observacoesSugeridas) {
-        setObservacoes(decodificada.observacoesSugeridas);
-      }
-      if (decodificada.modalidadeSugerida) {
-        setModalidadePagamento(decodificada.modalidadeSugerida);
-        if (decodificada.modalidadeSugerida === 'parcelado') {
-          setNumParcelas(decodificada.numParcelasSugerido || 2);
-          setStatusPagamento('Parcelado');
-        } else if (decodificada.modalidadeSugerida === 'recorrente_mensal') {
-          setDuracaoRecorrencia('12_meses');
-        }
-      }
-
-      setErrors({});
-      toast.success(decodificada.mensagem);
-      setEtapaAtual(2);
+      aplicarDadosDecodificados(decodificada);
       return;
     }
 
     toast.warning('Formato não reconhecido. Digite os 44 dígitos da NF-e, 50 dígitos da NFS-e Nacional ou o número da nota.');
   };
 
-  // Aplica máscara de CNPJ enquanto o usuário digita
+  // Trata digitação e cola da chave de acesso com auto-decodificação instantânea
+  const handleChaveInputChange = (valor: string) => {
+    setChaveNfeInput(valor);
+    const limpa = valor.replace(/\D/g, '');
+    // Auto-decodifica imediatamente se colou chave completa (44 ou 50 dígitos) ou número conhecido
+    if (limpa.length === 44 || limpa.length === 50) {
+      const decodificada = decodificarChaveNfe(limpa, comprasExistentes);
+      if (decodificada && decodificada.valida) {
+        aplicarDadosDecodificados(decodificada);
+      }
+    }
+  };
+
+  // Trata alteração do código T.I com detecção de chave ou número de nota fiscal
+  const handleCodigoTiChange = (val: string) => {
+    setCodigoTi(val);
+    const limpo = val.replace(/\D/g, '');
+    if (limpo.length === 44 || limpo.length === 50) {
+      const decodificada = decodificarChaveNfe(limpo, comprasExistentes);
+      if (decodificada && decodificada.valida) {
+        aplicarDadosDecodificados(decodificada);
+      }
+    }
+  };
+
+  // Aplica máscara de CNPJ enquanto o usuário digita (ou decodifica se colou chave completa)
   const handleCnpjChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const raw = e.target.value.replace(/\D/g, '').slice(0, 14);
+    const rawCompleto = e.target.value.replace(/\D/g, '');
+    if (rawCompleto.length === 44 || rawCompleto.length === 50) {
+      const decodificada = decodificarChaveNfe(rawCompleto, comprasExistentes);
+      if (decodificada && decodificada.valida) {
+        aplicarDadosDecodificados(decodificada);
+        return;
+      }
+    }
+
+    const raw = rawCompleto.slice(0, 14);
     let masked = raw;
     if (raw.length > 12) {
       masked = raw.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{1,2})$/, '$1.$2.$3/$4-$5');
@@ -1203,7 +1242,7 @@ export const CompraModal: React.FC<CompraModalProps> = ({
                       <input
                         type="text"
                         value={chaveNfeInput}
-                        onChange={(e) => setChaveNfeInput(e.target.value)}
+                        onChange={(e) => handleChaveInputChange(e.target.value)}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') {
                             e.preventDefault();
@@ -1215,7 +1254,7 @@ export const CompraModal: React.FC<CompraModalProps> = ({
                       />
                       <button
                         type="button"
-                        onClick={handleDecodificarChave}
+                        onClick={() => handleDecodificarChave()}
                         className="px-4 h-10 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-colors cursor-pointer shrink-0"
                       >
                         Preencher e Avançar
@@ -1282,10 +1321,16 @@ export const CompraModal: React.FC<CompraModalProps> = ({
 
                 <button
                   type="button"
-                  onClick={() => setEtapaAtual(2)}
+                  onClick={() => {
+                    if (chaveNfeInput.trim()) {
+                      handleDecodificarChave();
+                    } else {
+                      setEtapaAtual(2);
+                    }
+                  }}
                   className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-md shadow-blue-500/20 transition-all cursor-pointer"
                 >
-                  <span>Continuar com Preenchimento Manual</span>
+                  <span>Continuar</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
               </div>
@@ -1295,6 +1340,36 @@ export const CompraModal: React.FC<CompraModalProps> = ({
           {/* PASSO 2: DADOS DA COMPRA (OCULTO NAS ETAPAS 1 E 3) */}
           {etapaAtual === 2 && (
             <div className="space-y-6 animate-in fade-in duration-200">
+
+              {/* Barra Rápida de Identificação por Chave ou Número no Passo 2 */}
+              <div className="p-3.5 bg-blue-50/70 border border-blue-200 rounded-2xl flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 shadow-2xs">
+                <div className="flex items-center gap-2 text-xs font-bold text-blue-900 shrink-0">
+                  <KeyRound className="w-4 h-4 text-blue-600" />
+                  <span>Puxar por Chave NF ou Nº:</span>
+                </div>
+                <div className="flex-1 flex gap-2">
+                  <input
+                    type="text"
+                    value={chaveNfeInput}
+                    onChange={(e) => handleChaveInputChange(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleDecodificarChave();
+                      }
+                    }}
+                    placeholder="Cole os 44 dígitos da NF-e, 50 da NFS-e ou nº da nota (Ex: 4586, 1747050)..."
+                    className="flex-1 h-9 px-3 text-xs font-mono rounded-xl border border-blue-200 bg-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleDecodificarChave()}
+                    className="px-3.5 h-9 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-colors shrink-0 cursor-pointer"
+                  >
+                    Puxar Dados e Itens
+                  </button>
+                </div>
+              </div>
 
               {/* DICA QUANDO INSERE SOMENTE NÚMEROS / CHAVE */}
               {codigoTi && (!valor || !descricao) && (
@@ -2006,7 +2081,7 @@ export const CompraModal: React.FC<CompraModalProps> = ({
                 <input
                   type="text"
                   value={codigoTi}
-                  onChange={(e) => setCodigoTi(e.target.value)}
+                  onChange={(e) => handleCodigoTiChange(e.target.value)}
                   placeholder="Ex: NF-12845 ou TI-2026-001"
                   className="w-full h-10 px-3 text-xs sm:text-sm font-mono rounded-xl border border-slate-300 bg-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition-all"
                 />
