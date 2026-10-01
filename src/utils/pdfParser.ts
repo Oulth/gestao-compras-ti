@@ -60,7 +60,17 @@ function extrairDadosDanfe(text: string): DadosNotaFiscalPdfExtraidos {
     text.match(/Valor Total da Nota[\s\S]*?R\$\s*([\d\.\,]+)/i) ||
     text.match(/Valor:\s*R\$\s*([\d\.\,]+)/i) ||
     text.match(/V\. TOTAL DA NOTA[\s\S]*?R\$\s*([\d\.\,]+)/i);
-  const valor = valMatch ? valMatch[1].replace(/\./g, '').replace(',', '.') : '';
+  let valor = '';
+  if (valMatch) {
+    const rawVal = valMatch[1].trim();
+    if (rawVal.includes('.') && rawVal.includes(',')) {
+      valor = rawVal.replace(/\./g, '').replace(',', '.');
+    } else if (rawVal.includes(',')) {
+      valor = rawVal.replace(',', '.');
+    } else {
+      valor = rawVal;
+    }
+  }
 
   // 6. Chave de Acesso (44 dígitos da NF-e)
   const chaveMatch = text.match(/\b(\d{4}\s*\d{4}\s*\d{4}\s*\d{4}\s*\d{4}\s*\d{4}\s*\d{4}\s*\d{4}\s*\d{4}\s*\d{4}\s*\d{4})\b/);
@@ -157,7 +167,17 @@ function extrairDadosNfse(text: string): DadosNotaFiscalPdfExtraidos {
     text.match(/Valor (?:L[íi]quido da NFS-e|da Opera[çc][ãa]o\s*\/\s*Servi[çc]o)\s*R\$\s*([\d\.\,]+)/i) ||
     text.match(/VALOR TOTAL.*?R\$\s*([\d\.\,]+)/i) ||
     text.match(/Valor Total da Nota:?\s*R\$\s*([\d\.\,]+)/i);
-  const valor = matchValor ? matchValor[1].replace(/\./g, '').replace(',', '.') : '';
+  let valor = '';
+  if (matchValor) {
+    const rawVal = matchValor[1].trim();
+    if (rawVal.includes('.') && rawVal.includes(',')) {
+      valor = rawVal.replace(/\./g, '').replace(',', '.');
+    } else if (rawVal.includes(',')) {
+      valor = rawVal.replace(',', '.');
+    } else {
+      valor = rawVal;
+    }
+  }
 
   // 7. Dados Bancários / Chave PIX
   const matchPix = text.match(/chave\s*pix:?\s*([^\s\|;]+)/i);

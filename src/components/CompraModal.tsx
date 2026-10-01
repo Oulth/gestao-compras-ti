@@ -737,8 +737,32 @@ export const CompraModal: React.FC<CompraModalProps> = ({
     }
   };
 
+// Função utilitária segura para conversão de valores monetários BRL / decimais
+function parseMoedaParaNumero(valorInput: string | number | null | undefined): number {
+  if (typeof valorInput === 'number') return isNaN(valorInput) ? 0 : valorInput;
+  if (!valorInput) return 0;
+  const limpo = String(valorInput).trim();
+  
+  if (limpo.includes('.') && limpo.includes(',')) {
+    return parseFloat(limpo.replace(/\./g, '').replace(',', '.')) || 0;
+  }
+  if (limpo.includes(',')) {
+    return parseFloat(limpo.replace(',', '.')) || 0;
+  }
+  if (limpo.includes('.')) {
+    const partes = limpo.split('.');
+    if (partes.length === 2 && partes[1].length <= 2) {
+      return parseFloat(limpo) || 0;
+    }
+    if (partes.length === 2 && partes[1].length === 3) {
+      return parseFloat(limpo.replace(/\./g, '')) || 0;
+    }
+  }
+  return parseFloat(limpo) || 0;
+}
+
   // Computações para a Modalidade Parcelada
-  const valorNumerico = parseFloat(valor.replace(',', '.')) || 0;
+  const valorNumerico = parseMoedaParaNumero(valor);
   const valorParcelaCalculado = numParcelas > 0 ? valorNumerico / numParcelas : 0;
   const dataFinalParcelas = useMemo(() => {
     if (!dataCompra || numParcelas <= 1) return dataCompra;
@@ -2319,13 +2343,13 @@ export const CompraModal: React.FC<CompraModalProps> = ({
               <div className="space-y-1">
                 <span className="text-[11px] text-slate-400 font-medium block">Valor Total</span>
                 <span className="font-bold font-mono text-emerald-700 text-base block">
-                  {valor ? formatCurrency(parseFloat(valor.replace(/\./g, '').replace(',', '.')) || 0) : 'R$ 0,00'}
+                  {formatCurrency(valorNumerico)}
                 </span>
                 <span className="text-[11px] text-slate-500 block">
                   {modalidadePagamento === 'parcelado'
-                    ? `${numParcelas}x parcelas`
+                    ? `${numParcelas}x de ${formatCurrency(valorParcelaCalculado)}`
                     : modalidadePagamento === 'recorrente_mensal'
-                    ? `${mesesRecorrentesCalculados} mensalidades`
+                    ? `${mesesRecorrentesCalculados} mensalidades de ${formatCurrency(valorNumerico)}`
                     : 'À vista'}
                 </span>
               </div>
